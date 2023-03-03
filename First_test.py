@@ -1,6 +1,8 @@
 import numpy as np
 import tensorflow as tf
-from datetime import datetime
+import tensorflow_model_optimization as tfmot
+# from datetime import datetime
+quantize_model = tfmot.quantization.keras.quantize_model
 
 (train_images, train_labels), (test_images, test_labels) = tf.keras.datasets.fashion_mnist.load_data()
 
@@ -18,16 +20,28 @@ model = tf.keras.Sequential([
 # tensorboard_callback = tf.keras.callbacks.TensorBoard(log_dir = log_directory)
 
 model.compile(optimizer = tf.keras.optimizers.Adam(learning_rate = 0.01), loss = 'sparse_categorical_crossentropy', metrics = ['accuracy'])
-model.fit(train_images, train_labels,
-    epochs = 5)
-#     batch_size = 5, epochs = 3, 
-#     callbacks = [tensorboard_callback])
+model.summary()
+model.fit(train_images, train_labels, epochs = 5)
 
-test_loss, test_acc = model.evaluate(test_images, test_labels)
+q_aware_model = quantize_model(model)
 
-print('Test accuracy : ', test_acc)
+q_aware_model.compile(optimizer = 'adam', 
+    loss = tf.keras.losses.SparseCategoricalCrossentropy(from_logits = True), 
+    metrics = ['accuracy'])
 
-prediction = model.predict(test_images)
+q_aware_model.summary()
+q_aware_model.fit(train_images, train_labels, epochs = 5)
 
-print(prediction[0], np.argmax(prediction[0]))
-print("Test code")
+_, baseline_model_accuracy = model.evaluate(test_images, test_labels)
+
+_, q_aware_model_accuracy = q_aware_model.evaluate(test_images, test_labels)
+
+print("Baseline test accuracy : ", baseline_model_accuracy)
+print("Q Aware test accuracy : ", q_aware_model_accuracy)
+
+
+# test_loss, test_acc = model.evaluate(test_images, test_labels)
+# print('Test accuracy : ', test_acc)
+# prediction = model.predict(test_images)
+# print(prediction[0], np.argmax(prediction[0]))
+# print("Test code")
