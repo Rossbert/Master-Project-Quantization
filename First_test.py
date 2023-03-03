@@ -30,3 +30,4 @@ print('Test accuracy : ', test_acc)
 prediction = model.predict(test_images)
 
 print(prediction[0], np.argmax(prediction[0]))
+print("Test code")
