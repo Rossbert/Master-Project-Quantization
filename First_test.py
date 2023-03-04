@@ -2,7 +2,6 @@ import numpy as np
 import tensorflow as tf
 import tensorflow_model_optimization as tfmot
 # from datetime import datetime
-quantize_model = tfmot.quantization.keras.quantize_model
 
 (train_images, train_labels), (test_images, test_labels) = tf.keras.datasets.fashion_mnist.load_data()
 
@@ -23,6 +22,7 @@ model.compile(optimizer = tf.keras.optimizers.Adam(learning_rate = 0.01), loss =
 model.summary()
 model.fit(train_images, train_labels, epochs = 5)
 
+quantize_model = tfmot.quantization.keras.quantize_model
 q_aware_model = quantize_model(model)
 
 q_aware_model.compile(optimizer = 'adam', 
