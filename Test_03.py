@@ -69,90 +69,69 @@ quantized_and_dequantized = OrderedDict()
 quantized = OrderedDict()
 new_quantized_and_dequantized = OrderedDict()
 new_quantized = OrderedDict()
+layer_index_list = []
+key_index_list = []
 
-idx = 0
+layer : tfmot.quantization.keras.QuantizeWrapperV2
 for i, layer in enumerate(q_aware_model.layers):
     quantizer : tfmot.quantization.keras.quantizers.Quantizer
     weight : tf.Variable
     if hasattr(layer, '_weight_vars'):
         for weight, quantizer, quantizer_vars in layer._weight_vars:
-            idx += 1
             min_var = quantizer_vars['min_var']
             max_var = quantizer_vars['max_var']
 
-            quantized_and_dequantized[layer.name] = quantizer(inputs = weight, training = False, weights = quantizer_vars)
-            quantized[layer.name] = np.round(quantized_and_dequantized[layer.name] / max_var * (2**(bit_width-1)-1))
+            key = weight.name[:-2]
+            layer_index_list.append(i)
+            key_index_list.append(key)
+            quantized_and_dequantized[key] = quantizer(inputs = weight, training = False, weights = quantizer_vars)
+            quantized[key] = np.round(quantized_and_dequantized[key] / max_var * (2**(bit_width-1)-1))
 
             if "conv2d" in layer.name:
-                new_quantized_and_dequantized[layer.name] = tf.quantization.fake_quant_with_min_max_vars_per_channel(weight, min_var, max_var, bit_width, narrow_range = True, name = "New_quantized_" + str(i))
-                new_quantized[layer.name] = np.round(new_quantized_and_dequantized[layer.name] / max_var * (2**(bit_width-1)-1))
+                new_quantized_and_dequantized[key] = tf.quantization.fake_quant_with_min_max_vars_per_channel(weight, min_var, max_var, bit_width, narrow_range = True, name = "New_quantized_" + str(i))
+                new_quantized[key] = np.round(new_quantized_and_dequantized[key] / max_var * (2**(bit_width-1)-1))
             elif "dense" in layer.name:
-                new_quantized_and_dequantized[layer.name] = tf.quantization.fake_quant_with_min_max_vars(weight, min_var, max_var, bit_width, narrow_range = True, name = "New_quantized_" + str(i))
-                new_quantized[layer.name] = np.round(new_quantized_and_dequantized[layer.name] / max_var * (2**(bit_width-1)-1))
+                new_quantized_and_dequantized[key] = tf.quantization.fake_quant_with_min_max_vars(weight, min_var, max_var, bit_width, narrow_range = True, name = "New_quantized_" + str(i))
+                new_quantized[key] = np.round(new_quantized_and_dequantized[key] / max_var * (2**(bit_width-1)-1))
 
 for key in quantized:
-    print("Fake Quantized")
+    # print("Fake Quantized")
     print(key)
     if "dense" not in key:
-        print(quantized_and_dequantized[key][:,:,0,0])
-        # print(quantized[key][:,:,0,0])
+        # print(quantized_and_dequantized[key][:,:,0,0])
+        print(quantized[key][:,:,0,0])
     else:
-        print(quantized_and_dequantized[key][:,0])
-        # print(quantized[key][:,0])
+        # print(quantized_and_dequantized[key][:,0])
+        print(quantized[key][:,0])
 
-    print("New Fake Quantized")
-    print(key)
-    if "dense" not in key:
-        print(new_quantized_and_dequantized[key][:,:,0,0])
-        # print(new_quantized[key][:,:,0,0])
-    else:
-        print(new_quantized_and_dequantized[key][:,0])
-        # print(new_quantized[key][:,0])
-
-
-def quantize_function(input, min_var, max_var, bits, narrow_range = False):
-    # Very important
+def self_quantize_function(input, min_var, max_var, bits, narrow_range = False):
     if not narrow_range:
         scale = (max_var - min_var) / (2**bits - 1)
     else:
         scale = (max_var - min_var) / (2**bits - 2)
-    min_adj = scale * round(min_var / scale)
+    min_adj = scale * np.round(min_var / scale)
     max_adj = max_var + min_adj - min_var
-    print("Scale : ", scale)
+    # print("Scale : ", scale)
     return scale * np.round(input / scale)
 
-self_quantized = quantize_function(q_aware_model.layers[11].get_weights()[0], min_var.numpy(), max_var.numpy(), bit_width, narrow_range = True)
-print("Self quantized : ")
-print(self_quantized[:5,:5])
-new_quantized = np.round(new_quantized_and_dequantized / max_var * (2**(bit_width - 1) - 1))
-print("New quantized")
-print(new_quantized[:5,:5])
+for idx, layer_index in enumerate(layer_index_list):
+    m_vars = {variable.name: variable for i, variable in enumerate(q_aware_model.layers[layer_index].non_trainable_variables) if key_index_list[idx] in variable.name}
+    kernel = {variable.name: variable for i, variable in enumerate(q_aware_model.layers[layer_index].trainable_variables) if "kernel" in variable.name}
+    min_key = list(key for key in m_vars if "min" in key)[0]
+    max_key = list(key for key in m_vars if "max" in key)[0]
+    min_var = m_vars[min_key]
+    max_var = m_vars[max_key]
 
-pos = (41,9)
-print(quantized_and_dequantized[pos].numpy())
-print(new_quantized_and_dequantized[pos].numpy())
-print(self_quantized[pos])
-
-
-print("Other variables stored in last layer")
-print(q_aware_model.layers[11].variables[5:])
-
-print("Quantized model biases")
-print(q_aware_model.layers[11].get_weights()[1])
-
-l = 11
-print("Elements of layer ", l, "of q aware model")
-# print([elem for elem in dir(q_aware_model.layers[l]) if not elem.startswith('_')])
-for elem in dir(q_aware_model.layers[l]):
-    if not elem.startswith('_'):
-        print(elem)
-# print([elem for elem in dir(q_aware_model.layers[l]) if elem.startswith('_')])
-
-l = 11
-print("Config :")
-print(dir(q_aware_model.layers[l].quantize_config))
-print(type(q_aware_model.layers[l].quantize_config))
-conf : tfmot.quantization.keras.default_8bit = q_aware_model.layers[l].quantize_config
-print("Type")
-print(q_aware_model.layers[l].quantize_config.get_config())
-print(q_aware_model.layers[l].quantize_config.activation_quantizer)
+    kernel_index = 0
+    self_quantized_and_dequantized = self_quantize_function(q_aware_model.layers[layer_index].trainable_variables[kernel_index], min_var, max_var, bit_width, narrow_range = True)
+    
+    print(key_index_list[idx])
+    # print("Self Quantized")
+    if "dense" not in key_index_list[idx]:
+        # print(self_quantized_and_dequantized[:,:,0,0])
+        self_quantized = np.round(self_quantized_and_dequantized / max_var * (2**(bit_width - 1) - 1))
+        print(self_quantized[:,:,0,0])
+    else:
+        # print(self_quantized_and_dequantized[:,0])
+        self_quantized = np.round(self_quantized_and_dequantized / max_var * (2**(bit_width - 1) - 1))
+        print(self_quantized[:,0])
