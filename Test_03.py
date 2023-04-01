@@ -2,6 +2,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 import tensorflow as tf
 import tensorflow_model_optimization as tfmot
+from collections import OrderedDict
 
 (train_images, train_labels), (test_images, test_labels) = tf.keras.datasets.fashion_mnist.load_data()
 print(train_images.shape)
@@ -33,52 +34,80 @@ def get_functional_model():
 
 
 # Load model_v3 Normal functional model
-save_dir = "./logs/"
-save_path = save_dir + "model_v3"
-model : tf.keras.models.Model = tf.keras.models.load_model(save_path)
-loss, acc = model.evaluate(test_images, test_labels)
-print('Test accuracy : ', "{:0.2%}".format(acc))
+# save_dir = "./logs/"
+# save_path = save_dir + "model_v3"
+# model : tf.keras.models.Model = tf.keras.models.load_model(save_path)
+# loss, acc = model.evaluate(test_images, test_labels)
+# print('Test accuracy : ', "{:0.2%}".format(acc))
 
 # Conversion and training into a Q Aware model
-q_aware_model = tfmot.quantization.keras.quantize_model(model)
-q_aware_model.compile(optimizer = 'adam', 
-    loss = 'sparse_categorical_crossentropy', 
-    metrics = ['accuracy'])
-q_aware_model.summary()
+# q_aware_model = tfmot.quantization.keras.quantize_model(model)
+# q_aware_model.compile(optimizer = 'adam', 
+#     loss = 'sparse_categorical_crossentropy', 
+#     metrics = ['accuracy'])
+# q_aware_model.summary()
 
 # Training of Q Aware model
-train_log = q_aware_model.fit(train_images, train_labels,
-    batch_size = 128,
-    epochs = 1,
-    validation_split = 0.1)
+# train_log = q_aware_model.fit(train_images, train_labels,
+#     batch_size = 128,
+#     epochs = 1,
+#     validation_split = 0.1)
 
 # Load Q Aware Model
-# save_dir = "./logs/"
-# save_path = save_dir + "model_q4_func"
-# with tfmot.quantization.keras.quantize_scope():
-#     q_aware_model = tf.keras.models.load_model(save_path)
+save_dir = "./logs/"
+save_path = save_dir + "model_q4_func"
+q_aware_model : tf.keras.Model
+with tfmot.quantization.keras.quantize_scope():
+    q_aware_model = tf.keras.models.load_model(save_path)
 
 # Test Accuracy of loaded model
 q_aware_test_loss, q_aware_test_acc = q_aware_model.evaluate(test_images, test_labels)
 print('Test accuracy : ', "{:0.2%}".format(q_aware_test_acc))
 
 bit_width = 8
+quantized_and_dequantized = OrderedDict()
+quantized = OrderedDict()
+new_quantized_and_dequantized = OrderedDict()
+new_quantized = OrderedDict()
+
+idx = 0
 for i, layer in enumerate(q_aware_model.layers):
+    quantizer : tfmot.quantization.keras.quantizers.Quantizer
+    weight : tf.Variable
     if hasattr(layer, '_weight_vars'):
         for weight, quantizer, quantizer_vars in layer._weight_vars:
-            quantized_and_dequantized = quantizer(weight, training = False, weights = quantizer_vars)
+            idx += 1
             min_var = quantizer_vars['min_var']
             max_var = quantizer_vars['max_var']
-            new_quantized_and_dequantized = tf.quantization.fake_quant_with_min_max_vars(weight, min_var, max_var, bit_width, narrow_range = True, name = "New_quantized")
-            quantized = np.round(quantized_and_dequantized / max_var * (2**(bit_width-1)-1))
-print("Quantized model weights")
-print(q_aware_model.layers[11].get_weights()[0][:5,:5])
 
-print("Manual Quantized values")
-print(quantized[:5,:5])
+            quantized_and_dequantized[layer.name] = quantizer(inputs = weight, training = False, weights = quantizer_vars)
+            quantized[layer.name] = np.round(quantized_and_dequantized[layer.name] / max_var * (2**(bit_width-1)-1))
 
-print("New fake quantized")
-print(new_quantized_and_dequantized[:5,:5])
+            if "conv2d" in layer.name:
+                new_quantized_and_dequantized[layer.name] = tf.quantization.fake_quant_with_min_max_vars_per_channel(weight, min_var, max_var, bit_width, narrow_range = True, name = "New_quantized_" + str(i))
+                new_quantized[layer.name] = np.round(new_quantized_and_dequantized[layer.name] / max_var * (2**(bit_width-1)-1))
+            elif "dense" in layer.name:
+                new_quantized_and_dequantized[layer.name] = tf.quantization.fake_quant_with_min_max_vars(weight, min_var, max_var, bit_width, narrow_range = True, name = "New_quantized_" + str(i))
+                new_quantized[layer.name] = np.round(new_quantized_and_dequantized[layer.name] / max_var * (2**(bit_width-1)-1))
+
+for key in quantized:
+    print("Fake Quantized")
+    print(key)
+    if "dense" not in key:
+        print(quantized_and_dequantized[key][:,:,0,0])
+        # print(quantized[key][:,:,0,0])
+    else:
+        print(quantized_and_dequantized[key][:,0])
+        # print(quantized[key][:,0])
+
+    print("New Fake Quantized")
+    print(key)
+    if "dense" not in key:
+        print(new_quantized_and_dequantized[key][:,:,0,0])
+        # print(new_quantized[key][:,:,0,0])
+    else:
+        print(new_quantized_and_dequantized[key][:,0])
+        # print(new_quantized[key][:,0])
 
 
 def quantize_function(input, min_var, max_var, bits, narrow_range = False):
