@@ -12,11 +12,11 @@ test_images = test_images / 255.0
 
 def get_functional_model():
     input_layer = tf.keras.layers.Input(shape = (28, 28, 1))
-    conv_1 = tf.keras.layers.Conv2D(32, 5, use_bias = False, activation = 'relu')(input_layer)
+    conv_1 = tf.keras.layers.Conv2D(32, 5, use_bias = True, activation = 'relu')(input_layer)
     pool_1 = tf.keras.layers.MaxPool2D(pool_size = 2, strides = 2)(conv_1)
-    conv_2 = tf.keras.layers.Conv2D(64, 5, use_bias = False, activation = 'relu')(pool_1)
+    conv_2 = tf.keras.layers.Conv2D(64, 5, use_bias = True, activation = 'relu')(pool_1)
     pool_2 = tf.keras.layers.MaxPool2D(pool_size = 2, strides = 2)(conv_2)
-    conv_3 = tf.keras.layers.Conv2D(96, 3, use_bias = False, activation = 'relu')(pool_2)
+    conv_3 = tf.keras.layers.Conv2D(96, 3, use_bias = True, activation = 'relu')(pool_2)
     pool_3 = tf.keras.layers.MaxPool2D(pool_size = 2, strides = 2)(conv_3)
     flat_1 = tf.keras.layers.Flatten()(pool_3)
     dense_out = tf.keras.layers.Dense(10, activation = 'softmax', name = "dense_last")(flat_1)
