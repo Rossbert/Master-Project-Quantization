@@ -29,36 +29,36 @@ def get_functional_model():
         metrics = ['accuracy'])
     return model
 
-# model = get_functional_model()
-# model.summary()
+model = get_functional_model()
+model.summary()
 
 
 # Load model_v3 Normal functional model
-# save_dir = "./logs/"
-# save_path = save_dir + "model_v3"
+save_dir = "./logs/"
+save_path = save_dir + "model_v3"
 # model : tf.keras.models.Model = tf.keras.models.load_model(save_path)
-# loss, acc = model.evaluate(test_images, test_labels)
-# print('Test accuracy : ', "{:0.2%}".format(acc))
+loss, acc = model.evaluate(test_images, test_labels)
+print('Test accuracy : ', "{:0.2%}".format(acc))
 
 # Conversion and training into a Q Aware model
-# q_aware_model = tfmot.quantization.keras.quantize_model(model)
-# q_aware_model.compile(optimizer = 'adam', 
-#     loss = 'sparse_categorical_crossentropy', 
-#     metrics = ['accuracy'])
-# q_aware_model.summary()
+q_aware_model = tfmot.quantization.keras.quantize_model(model)
+q_aware_model.compile(optimizer = 'adam', 
+    loss = 'sparse_categorical_crossentropy', 
+    metrics = ['accuracy'])
+q_aware_model.summary()
 
 # Training of Q Aware model
-# train_log = q_aware_model.fit(train_images, train_labels,
-#     batch_size = 128,
-#     epochs = 1,
-#     validation_split = 0.1)
+train_log = q_aware_model.fit(train_images, train_labels,
+    batch_size = 128,
+    epochs = 1,
+    validation_split = 0.1)
 
 # Load Q Aware Model
 save_dir = "./logs/"
 save_path = save_dir + "model_q4_func"
 q_aware_model : tf.keras.Model
-with tfmot.quantization.keras.quantize_scope():
-    q_aware_model = tf.keras.models.load_model(save_path)
+# with tfmot.quantization.keras.quantize_scope():
+#     q_aware_model = tf.keras.models.load_model(save_path)
 
 # Test Accuracy of loaded model
 q_aware_test_loss, q_aware_test_acc = q_aware_model.evaluate(test_images, test_labels)
