@@ -6,7 +6,7 @@ Second mofication.
 
 This modification is for the second branch.
 
-This file was deleted because it caused conflicts between Github and git while modified simulataneously.
+Completely new files added test of quantization.
 
 Modification done in Github.
 
