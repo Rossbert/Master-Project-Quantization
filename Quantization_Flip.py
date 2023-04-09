@@ -1,6 +1,6 @@
 import numpy as np
+import scipy as sp
 import pandas as pd
-import matplotlib.pyplot as plt
 import tensorflow as tf
 import tensorflow_model_optimization as tfmot
 from collections import OrderedDict
@@ -91,11 +91,12 @@ tflite_accuracy = evaluate_model(interpreter)
 print('TFLite model test accuracy:', "{:0.2%}".format(tflite_accuracy))
 
 # Quantification of values
-bit_width = 8
+BIT_WIDTH = 8
 quantized_and_dequantized = OrderedDict()
 quantized = OrderedDict()
 layer_index_list = []
 keys_list = []
+layers_shapes = []
 
 layer : tfmot.quantization.keras.QuantizeWrapperV2
 for i, layer in enumerate(q_aware_model.layers):
@@ -109,84 +110,151 @@ for i, layer in enumerate(q_aware_model.layers):
             key = weight.name[:-2]
             layer_index_list.append(i)
             keys_list.append(key)
+            layers_shapes.append(weight.numpy().shape)
             quantized_and_dequantized[key] = quantizer(inputs = weight, training = False, weights = quantizer_vars)
-            quantized[key] = np.round(quantized_and_dequantized[key] / max_var * (2**(bit_width-1)-1))
+            quantized[key] = np.round(quantized_and_dequantized[key] / max_var * (2**(BIT_WIDTH-1)-1))
 
 performance_data = []
 entry = {}
 entry['name'] = q_aware_model.name + "-original"
 entry['layer_affected'] = None
+entry['kernel_index'] = None
 entry['layer_affected_index'] = None
-entry['position disrupted'] = None
-entry['bit disrupted'] = None
+entry['position_disrupted'] = None
+entry['min_var'] = None
+entry['max_var'] = None
+entry['original_weight_value'] = None
+entry['quantized_value'] = None
+entry['bit_disrupted'] = None
+entry['flipped_quantized_value'] = None
+entry['flipped_weight_value'] = None
 entry['q_aware_accuracy'] = q_aware_test_acc
 entry['tflite_accuracy'] = tflite_accuracy
+entry['q_aware_acc_degradation'] = None
+entry['tflite_acc_degradation'] = None
+entry['original_laplacian'] = None
+entry['modified_laplacian'] = None
+entry['original_int_laplacian'] = None
+entry['modified_int_laplacian'] = None
+entry['abs_laplacian_diff'] = None
+entry['abs_int_laplacian_diff'] = None
+
 performance_data.append(entry)
+print(keys_list)
+print(layers_shapes)
+for key in keys_list[1:]:
+    for i in range(500):
+        q_aware_copy : tf.keras.Model
+        # Load Q Aware model copy
+        with tfmot.quantization.keras.quantize_scope():
+            q_aware_copy = tf.keras.models.load_model(LOAD_PATH_Q_AWARE)
 
-for i in range(5000):
-    print("Iteration", i)
-    q_aware_copy : tf.keras.Model
-    # Load Q Aware model copy
-    with tfmot.quantization.keras.quantize_scope():
-        q_aware_copy = tf.keras.models.load_model(LOAD_PATH_Q_AWARE)
+        T_VARIABLES_KERNEL_INDEX = 0
+        kernel_idx = keys_list.index(key)
+        # key = keys_list[kernel_idx]
+        layer_index = layer_index_list[kernel_idx]
+        print("Iteration", i, key, kernel_idx)
 
-    # Random position for weight change
-    channel = np.random.randint(0,32)
-    kernel_row = np.random.randint(0,5)
-    kernel_column = np.random.randint(0,5)
-    conv_idx = 0 # First conv layer
-    T_VARIABLES_KERNEL_INDEX = 0
+        # Random position for weight change
+        if "dense" not in key:
+            # It is a convolutional layer
+            kernel_row = np.random.randint(0, layers_shapes[kernel_idx][0])
+            kernel_column = np.random.randint(0, layers_shapes[kernel_idx][1])
+            in_channel = np.random.randint(0, layers_shapes[kernel_idx][2])
+            out_channel = np.random.randint(0, layers_shapes[kernel_idx][3])
+            position = (kernel_row, kernel_column, in_channel, out_channel)
+            kernel_position = (slice(None), slice(None), in_channel, out_channel)
+            value_position = (kernel_row, kernel_column)
+        else:
+            # It is a fully connected layer
+            kernel_row = None
+            kernel_column = None
+            in_channel = np.random.randint(0, layers_shapes[kernel_idx][0])
+            out_channel = np.random.randint(0, layers_shapes[kernel_idx][1])
+            position = (in_channel, out_channel)
+            # kernel_position = (slice(None), out_channel)
+            # value_position = (in_channel)
+            kernel_position = (slice(None), slice(None)) # This slice takes the whole densely connected kernel
+            value_position = (in_channel, out_channel)
 
-    key = keys_list[conv_idx]
-    layer_index = layer_index_list[conv_idx]
-    print(key)
-    print("Random position", kernel_row, kernel_column, 0, channel)
-    # print(quantized[key][:,:,0,channel])
-    # print(quantized[key][kernel_row,kernel_column,0,channel])
-    # print(q_aware_copy.layers[layer_index].trainable_variables[kernel_index][:,:,0,channel])
-    print("Original kernel value", q_aware_copy.layers[layer_index].trainable_variables[T_VARIABLES_KERNEL_INDEX][kernel_row,kernel_column,0,channel].numpy())
+        print(key)
+        print("Random position", position)
+        # print(quantized[key][position])
+        # print(quantized[key][kernel_row,kernel_column,0,channel])
+        # print(q_aware_copy.layers[layer_index].trainable_variables[kernel_index][position])
+        print("Original kernel value", q_aware_copy.layers[layer_index].trainable_variables[T_VARIABLES_KERNEL_INDEX][position].numpy())
 
-    bit_position, flipped_int_kernel_value = random_bit_flipper(int(quantized[key][kernel_row,kernel_column,0,channel]))
-    # print("Flipped int value", flipped_int_kernel_value)
-    m_vars = {variable.name: variable for i, variable in enumerate(q_aware_model.layers[layer_index].non_trainable_variables) if keys_list[conv_idx] in variable.name}
-    min_key = list(key for key in m_vars if "min" in key)[0]
-    max_key = list(key for key in m_vars if "max" in key)[0]
-    min_var = m_vars[min_key]
-    max_var = m_vars[max_key]
-    flipped_float_kernel_val = flipped_int_kernel_value * max_var.numpy()[channel] / (2**(bit_width - 1) - 1)
-    print("Flipped float value", flipped_float_kernel_val, "Bit Flipped", bit_position)
-    # New kernel creation
-    update_kernel = q_aware_copy.layers[layer_index].trainable_variables[T_VARIABLES_KERNEL_INDEX].numpy()
-    update_kernel[kernel_row,kernel_column,0,channel] = flipped_float_kernel_val
-    q_aware_copy.layers[layer_index].trainable_variables[T_VARIABLES_KERNEL_INDEX].assign(update_kernel)
-    # print("New tensor kernel")
-    # print(q_aware_copy.layers[layer_index].trainable_variables[kernel_index][:,:,0,channel])
+        bit_position, flipped_int_kernel_value = random_bit_flipper(int(quantized[key][position]))
+        # print("Flipped int value", flipped_int_kernel_value)
+        m_vars = {variable.name: variable for i, variable in enumerate(q_aware_model.layers[layer_index].non_trainable_variables) if keys_list[kernel_idx] in variable.name}
+        min_key = list(key for key in m_vars if "min" in key)[0]
+        max_key = list(key for key in m_vars if "max" in key)[0]
+        if "dense" not in key:
+            # Convolutional layers max is divided per channels
+            min_var = m_vars[min_key][out_channel]
+            max_var = m_vars[max_key][out_channel]
+        else:
+            # Fully connected layer has only 1 max value for the kernel
+            min_var = m_vars[min_key]
+            max_var = m_vars[max_key]
+        flipped_float_kernel_val = flipped_int_kernel_value * max_var.numpy() / (2**(BIT_WIDTH - 1) - 1)
+        print("Flipped float value", flipped_float_kernel_val, "Bit Flipped", bit_position)
+        full_kernel = q_aware_copy.layers[layer_index].trainable_variables[T_VARIABLES_KERNEL_INDEX].numpy()
+        # New kernel creation, copy of full kernel
+        update_kernel = np.copy(full_kernel)
+        update_kernel[position] = flipped_float_kernel_val
+        q_aware_copy.layers[layer_index].trainable_variables[T_VARIABLES_KERNEL_INDEX].assign(update_kernel)
+        # print("New tensor kernel")
+        # print(q_aware_copy.layers[layer_index].trainable_variables[kernel_index][position])
 
-    # Conversion of new model to TF Lite model
-    new_converter = tf.lite.TFLiteConverter.from_keras_model(q_aware_copy)
-    new_converter.optimizations = [tf.lite.Optimize.DEFAULT]
-    new_tflite_model = new_converter.convert()
-    new_interpreter = tf.lite.Interpreter(model_content = new_tflite_model)
+        # Conversion of new model to TF Lite model
+        new_converter = tf.lite.TFLiteConverter.from_keras_model(q_aware_copy)
+        new_converter.optimizations = [tf.lite.Optimize.DEFAULT]
+        new_tflite_model = new_converter.convert()
+        new_interpreter = tf.lite.Interpreter(model_content = new_tflite_model)
 
-    # Check new accuracy
-    q_copy_test_loss, q_copy_test_acc = q_aware_copy.evaluate(test_images, test_labels)
-    print('New Q Aware model test accuracy : ', "{:0.2%}".format(q_copy_test_acc))
-    new_interpreter.allocate_tensors()
-    new_tflite_accuracy = evaluate_model(new_interpreter)
-    print('New TFLite model test accuracy:', "{:0.2%}".format(new_tflite_accuracy))
-    print('\n')
-    # with open(SAVE_NEW_TFLITE_PATH, 'wb') as f:
-    #     f.write(new_tflite_model)
-    
-    entry = {}
-    entry['name'] = q_aware_copy.name
-    entry['layer_affected'] = key
-    entry['layer_affected_index'] = layer_index
-    entry['position_disrupted'] = (kernel_row, kernel_column, 0, channel)
-    entry['bit_disrupted'] = bit_position
-    entry['q_aware_accuracy'] = q_copy_test_acc
-    entry['tflite_accuracy'] = new_tflite_accuracy
-    performance_data.append(entry)
+        # Check new accuracy
+        q_copy_test_loss, q_copy_test_acc = q_aware_copy.evaluate(test_images, test_labels)
+        print('New Q Aware model test accuracy : ', "{:0.2%}".format(q_copy_test_acc))
+        new_interpreter.allocate_tensors()
+        new_tflite_accuracy = evaluate_model(new_interpreter)
+        print('New TFLite model test accuracy:', "{:0.2%}".format(new_tflite_accuracy))
+        
+        entry = {}
+        entry['name'] = q_aware_copy.name + "_" + str(kernel_idx) + "_" + str(i)
+        entry['layer_affected'] = key
+        entry['kernel_index'] = kernel_idx
+        entry['layer_affected_index'] = layer_index
+        entry['position_disrupted'] = position
+        entry['min_var'] = min_var.numpy()
+        entry['max_var'] = max_var.numpy()
+        entry['original_weight_value'] = full_kernel[position]
+        entry['quantized_value'] = quantized[key][position]
+        entry['bit_disrupted'] = bit_position
+        entry['flipped_quantized_value'] = flipped_int_kernel_value
+        entry['flipped_weight_value'] = flipped_float_kernel_val
+        entry['q_aware_accuracy'] = q_copy_test_acc
+        entry['tflite_accuracy'] = new_tflite_accuracy
+        entry['q_aware_acc_degradation'] = q_copy_test_acc - q_aware_test_acc
+        entry['tflite_acc_degradation'] = new_tflite_accuracy - tflite_accuracy
+
+        kernel = full_kernel[kernel_position]
+        original_laplacian = sp.ndimage.laplace(kernel)
+        new_laplacian = sp.ndimage.laplace(update_kernel[kernel_position])
+        int_kernel = np.copy(quantized[key][kernel_position])
+        original_int_laplacian = sp.ndimage.laplace(int_kernel)
+        int_kernel[value_position] = flipped_int_kernel_value
+        new_int_laplacian = sp.ndimage.laplace(int_kernel)
+
+        entry['original_laplacian'] = original_laplacian[value_position]
+        entry['modified_laplacian'] = new_laplacian[value_position]
+        entry['original_int_laplacian'] = original_int_laplacian[value_position]
+        entry['modified_int_laplacian'] = new_int_laplacian[value_position]
+        entry['abs_laplacian_diff'] = np.abs(entry['original_laplacian'] - entry['modified_laplacian'])
+        entry['abs_int_laplacian_diff'] = np.abs(entry['original_int_laplacian'] - entry['modified_int_laplacian'])
+
+        print('\n')
+        performance_data.append(entry)
 
 data = pd.DataFrame(performance_data)
 data.to_csv('Performance_2.csv')

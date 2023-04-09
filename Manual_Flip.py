@@ -25,6 +25,9 @@ def evaluate_model(interpreter: tf.lite.Interpreter) -> float:
 
         # Post-processing: remove batch dimension and find the digit with highest probability.
         output = interpreter.tensor(output_index)
+        # if i % 128 == 0:
+        if i == 1000:
+            print(output())
         digit = np.argmax(output()[0])
         prediction_digits.append(digit)
 
