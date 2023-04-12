@@ -58,7 +58,7 @@ def evaluate_model(interpreter: tf.lite.Interpreter) -> float:
     return accuracy
 
 SAVE_PATH_MODEL =  "./model/" + "model_final_02"
-SAVE_PATH_Q_AWARE = "./model/" + "model_qware_final_02"
+SAVE_PATH_Q_AWARE = "./model/" + "model_q_aware_final_02"
 TFLITE_MODEL_PATH = "./model/" + 'tflite_final_02.tflite'
 
 # Load data
