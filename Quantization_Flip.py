@@ -1,3 +1,6 @@
+import time
+import datetime
+import os
 import numpy as np
 import scipy as sp
 import pandas as pd
@@ -51,7 +54,7 @@ def prob_mass_gen(bits : int) -> Tuple[List[int], List[float]]:
     m_max = p_max/(n - 1)
     # Probability calculation
     p = p_max * 1.0
-    m = 2/(n - 1)*(p- 1/n)
+    m = 2/(n - 1)*(p - 1/n)
     probabilities = [p + m*(i - values[-1]) for i in values]
     return values, probabilities
 
@@ -73,10 +76,36 @@ def random_bit_flipper(value : int) -> Tuple[int, int]:
         flipped_value = -((flipped_value ^ 0xFF) + 1)
     return bit_pos, flipped_value
 
-LOAD_PATH_MODEL =  "./model/" + "model_final_01"
-LOAD_PATH_Q_AWARE = "./model/" + "model_q_aware_final_01"
-LOAD_TFLITE_PATH = "./model/" + 'tflite_final_01.tflite'
-SAVE_NEW_TFLITE_PATH = "./model/" + 'new_tflite_flip_01.tflite'
+def random_bit_flipper_uniform(value : int) -> Tuple[int, int]:
+    """ Random bit flipper with uniform distribution
+    -
+    Obtains a value and flips one bit at a random position according to a uniform distribution.
+    - All values are in 8 bits, MSB have higher probability of getting flipped
+    - It is assumed value is a signed 8 bit number """
+    bit_pos = np.random.randint(8)
+    # Negative 2 Complement conversion
+    if value < 0:
+        value = (-value ^ 0xFF) + 1
+    flip_mask = 1 << bit_pos
+    flipped_value = value ^ flip_mask
+    # Negative back conversion 2 Complement
+    if flipped_value >= 128:
+        flipped_value = -((flipped_value ^ 0xFF) + 1)
+    return bit_pos, flipped_value
+
+OUTPUTS_DIR = "./outputs/"
+MODELS_DIR = "./model/"
+LOAD_PATH_MODEL =  MODELS_DIR + "model_final_01"
+LOAD_PATH_Q_AWARE = MODELS_DIR + "model_q_aware_final_01"
+LOAD_TFLITE_PATH = MODELS_DIR + 'tflite_final_01.tflite'
+
+SAVE_NEW_TFLITE_PATH = MODELS_DIR + 'new_tflite_flip_01.tflite'
+SAVE_DATA_PATH = OUTPUTS_DIR + 'Performance_Uniform_2.csv'
+
+if not os.path.exists(OUTPUTS_DIR):
+    os.mkdir(OUTPUTS_DIR)
+
+N_SIMULATIONS_PER_LAYER = 1000
 
 (train_images, train_labels), (test_images, test_labels) = tf.keras.datasets.fashion_mnist.load_data()
 train_images = train_images / 255.0
@@ -148,13 +177,16 @@ entry['original_int_laplacian'] = None
 entry['modified_int_laplacian'] = None
 entry['abs_laplacian_diff'] = None
 entry['abs_int_laplacian_diff'] = None
-
 performance_data.append(entry)
-print(keys_list)
-print(layers_shapes)
+
+print("Keys of layers", keys_list)
+print("Layer shapes", layers_shapes)
 T_VARIABLES_KERNEL_INDEX = 0
+total_time = time.time()
 for key in keys_list[1:]:
-    for i in range(500):
+    layer_time = time.time()
+    for i in range(N_SIMULATIONS_PER_LAYER):
+        iteration_time = time.time()
         q_aware_copy : tf.keras.Model
         # Load Q Aware model copy
         with tfmot.quantization.keras.quantize_scope():
@@ -196,17 +228,16 @@ for key in keys_list[1:]:
             min_var = m_vars[min_key]
             max_var = m_vars[max_key]
 
-        print(key)
-        print("Random position", position)
+        print(key, "Random position", position)
         # print(quantized[key][position])
         # print(q_aware_copy.layers[layer_index].trainable_variables[kernel_index][position])
-        print("Original kernel value", q_aware_copy.layers[layer_index].trainable_variables[T_VARIABLES_KERNEL_INDEX][position].numpy())
+        # print("Original kernel value", q_aware_copy.layers[layer_index].trainable_variables[T_VARIABLES_KERNEL_INDEX][position].numpy())
 
         # Flip values calculation
-        bit_position, flipped_int_kernel_value = random_bit_flipper(int(quantized[key][position]))
+        bit_position, flipped_int_kernel_value = random_bit_flipper_uniform(int(quantized[key][position]))
         # print("Flipped int value", flipped_int_kernel_value)
         flipped_float_kernel_val = flipped_int_kernel_value * max_var.numpy() / (2**(BIT_WIDTH - 1) - 1)
-        print("Flipped float value", flipped_float_kernel_val, "Bit Flipped", bit_position)
+        # print("Flipped float value", flipped_float_kernel_val, "Bit Flipped", bit_position)
         # New kernel creation, copy of full kernel
         full_kernel = q_aware_copy.layers[layer_index].trainable_variables[T_VARIABLES_KERNEL_INDEX].numpy()
         update_kernel = np.copy(full_kernel)
@@ -230,7 +261,7 @@ for key in keys_list[1:]:
         new_interpreter = tf.lite.Interpreter(model_content = new_tflite_model)
 
         # Check new accuracy
-        q_copy_test_loss, q_copy_test_acc = q_aware_copy.evaluate(test_images, test_labels)
+        q_copy_test_loss, q_copy_test_acc = q_aware_copy.evaluate(test_images, test_labels, verbose = 0)
         print('New Q Aware model test accuracy : ', "{:0.2%}".format(q_copy_test_acc))
         print('New Q Aware model test loss: ', q_copy_test_loss)
         new_interpreter.allocate_tensors()
@@ -264,8 +295,11 @@ for key in keys_list[1:]:
         entry['abs_laplacian_diff'] = np.abs(entry['original_laplacian'] - entry['modified_laplacian'])
         entry['abs_int_laplacian_diff'] = np.abs(entry['original_int_laplacian'] - entry['modified_int_laplacian'])
 
-        print('\n')
         performance_data.append(entry)
+        print("Iteration", i, "time", datetime.timedelta(seconds = time.time() - iteration_time), '\n')
+
+    print("Layer", key, "time", datetime.timedelta(seconds = time.time() - layer_time), '\n')
 
 data = pd.DataFrame(performance_data)
-data.to_csv('Performance_2.csv')
+data.to_csv(SAVE_DATA_PATH)
+print("Total time", datetime.timedelta(seconds = time.time() - total_time), '\n')
