@@ -1,2 +1,0 @@
-model_checkpoint_path: "Quantized_Model_Training"
-all_model_checkpoint_paths: "Quantized_Model_Training"
