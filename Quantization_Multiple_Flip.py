@@ -93,17 +93,25 @@ def random_bit_flipper_uniform(value : int) -> Tuple[int, int]:
         flipped_value = -((flipped_value ^ 0xFF) + 1)
     return bit_pos, flipped_value
 
-N_SIMULATIONS_PER_LAYER = 1
-N_FLIPS = 10
+""" Parameters to be tuned:
+- Output file name, if you don't update the name manually the previous file won't be deleted. New data will be appended to the end of the file instead.
+- Flag that enables training data to be saved, a False flag will decrease running time significantly.
+- Flag that enables laplacian related data to be saved.
+- Number of simulations per layer.
+- Total number of bits that will be flipped randomly from any weight in each layer.
+"""
+SAVE_FILE_NAME = 'Performance_Multiple_4.csv'
+SAVE_TRAINING_PERFORMANCE_FLAG = False
+SAVE_LAPLACIAN_DATA_FLAG = True
+N_SIMULATIONS_PER_LAYER = 2
+N_BITS_TO_FLIP = 20
 
-OUTPUTS_DIR = "./outputs/"
 MODELS_DIR = "./model/"
-LOAD_PATH_MODEL =  MODELS_DIR + "model_final_01"
 LOAD_PATH_Q_AWARE = MODELS_DIR + "model_q_aware_final_01"
 LOAD_TFLITE_PATH = MODELS_DIR + 'tflite_final_01.tflite'
-
 SAVE_NEW_TFLITE_PATH = MODELS_DIR + 'new_tflite_flip_01.tflite'
-SAVE_DATA_PATH = OUTPUTS_DIR + 'Performance_Multiple.csv'
+OUTPUTS_DIR = "./outputs/"
+SAVE_DATA_PATH = OUTPUTS_DIR + SAVE_FILE_NAME
 
 if not os.path.exists(OUTPUTS_DIR):
     os.mkdir(OUTPUTS_DIR)
@@ -119,21 +127,23 @@ with tfmot.quantization.keras.quantize_scope():
 # Load TFLite model
 interpreter = tf.lite.Interpreter(LOAD_TFLITE_PATH)
 
-# Evaluate accuracy of both models
+# Evaluate accuracy of both models in test set
 q_aware_test_loss, q_aware_test_acc = q_aware_model.evaluate(test_images, test_labels)
 print('Q Aware model test accuracy : ', "{:0.2%}".format(q_aware_test_acc))
 print('Q Aware model test loss: ', q_aware_test_loss)
-q_aware_train_loss, q_aware_train_acc = q_aware_model.evaluate(train_images, train_labels)
-print('Q Aware model train accuracy : ', "{:0.2%}".format(q_aware_train_acc))
-print('Q Aware model train loss: ', q_aware_train_loss)
 interpreter.allocate_tensors()
 tflite_test_loss, tflite_test_accuracy = evaluate_model(interpreter, test_images, test_labels)
 print('TFLite model test accuracy:', "{:0.2%}".format(tflite_test_accuracy))
 print('TFLite model test loss: ', tflite_test_loss)
-interpreter.allocate_tensors()
-tflite_train_loss, tflite_train_accuracy = evaluate_model(interpreter, train_images, train_labels)
-print('TFLite model train accuracy:', "{:0.2%}".format(tflite_train_accuracy))
-print('TFLite model train loss: ', tflite_train_loss)
+# Evaluate accuracy of both models in train set
+if SAVE_TRAINING_PERFORMANCE_FLAG:
+    q_aware_train_loss, q_aware_train_acc = q_aware_model.evaluate(train_images, train_labels)
+    print('Q Aware model train accuracy : ', "{:0.2%}".format(q_aware_train_acc))
+    print('Q Aware model train loss: ', q_aware_train_loss)
+    interpreter.allocate_tensors()
+    tflite_train_loss, tflite_train_accuracy = evaluate_model(interpreter, train_images, train_labels)
+    print('TFLite model train accuracy:', "{:0.2%}".format(tflite_train_accuracy))
+    print('TFLite model train loss: ', tflite_train_loss)
 
 # Quantification of values
 BIT_WIDTH = 8
@@ -180,18 +190,20 @@ entry['q_aware_test_acc_degradation'] = None
 entry['tflite_test_acc_degradation'] = None
 entry['q_aware_test_loss'] = q_aware_test_loss
 entry['tflite_test_loss'] = tflite_test_loss
-entry['q_aware_train_accuracy'] = q_aware_train_acc
-entry['tflite_train_accuracy'] = tflite_train_accuracy
-entry['q_aware_train_acc_degradation'] = None
-entry['tflite_train_acc_degradation'] = None
-entry['q_aware_train_loss'] = q_aware_train_loss
-entry['tflite_train_loss'] = tflite_train_loss
-entry['original_laplacian'] = None
-entry['modified_laplacian'] = None
-entry['original_int_laplacian'] = None
-entry['modified_int_laplacian'] = None
-entry['abs_laplacian_diff'] = None
-entry['abs_int_laplacian_diff'] = None
+if SAVE_LAPLACIAN_DATA_FLAG:
+    entry['original_laplacian'] = None
+    entry['modified_laplacian'] = None
+    entry['original_int_laplacian'] = None
+    entry['modified_int_laplacian'] = None
+    entry['abs_laplacian_diff'] = None
+    entry['abs_int_laplacian_diff'] = None
+if SAVE_TRAINING_PERFORMANCE_FLAG:
+    entry['q_aware_train_accuracy'] = q_aware_train_acc
+    entry['tflite_train_accuracy'] = tflite_train_accuracy
+    entry['q_aware_train_acc_degradation'] = None
+    entry['tflite_train_acc_degradation'] = None
+    entry['q_aware_train_loss'] = q_aware_train_loss
+    entry['tflite_train_loss'] = tflite_train_loss
 # performance_data.append(entry)
 
 print("Keys of layers", keys_list)
@@ -199,9 +211,10 @@ print("Layer shapes", layers_shapes)
 T_VARIABLES_KERNEL_INDEX = 0
 total_time = time.time()
 
-FILE_FLAG = os.path.exists(SAVE_DATA_PATH)
+FILE_EXISTS_FLAG = os.path.exists(SAVE_DATA_PATH)
 
-if FILE_FLAG:
+# Recover last number
+if FILE_EXISTS_FLAG:
     with open(SAVE_DATA_PATH, 'r') as file:
         file.seek(0, os.SEEK_END)
         file.seek(file.tell() - 3, os.SEEK_SET)
@@ -219,7 +232,7 @@ if FILE_FLAG:
 
 with open(SAVE_DATA_PATH, 'a') as file:
     writer = csv.writer(file, delimiter = ',', lineterminator = '\n')
-    if not FILE_FLAG:
+    if not FILE_EXISTS_FLAG:
         writer.writerow([''] + list(entry.keys()))
         writer.writerow([''] + list(entry.values()))
         file_idx = 0
@@ -251,7 +264,16 @@ with open(SAVE_DATA_PATH, 'a') as file:
             quantized_weights_list = []
             flipped_quantized_list = []
             flipped_float_weight_list = []
-            for j in range(N_FLIPS):
+            # Lists for additional data
+            if SAVE_LAPLACIAN_DATA_FLAG:
+                original_laplacian_list = []
+                new_laplacian_list = []
+                original_int_laplacian_list = []
+                new_int_laplacian_list = []
+                abs_laplacian_diff_list = []
+                abs_int_laplacian_diff_list = []
+
+            for j in range(N_BITS_TO_FLIP):
                 m_vars = {variable.name: variable for i, variable in enumerate(q_aware_model.layers[layer_index].non_trainable_variables) if keys_list[kernel_idx] in variable.name}
                 min_key = list(key for key in m_vars if "min" in key)[0]
                 max_key = list(key for key in m_vars if "max" in key)[0]
@@ -291,15 +313,7 @@ with open(SAVE_DATA_PATH, 'a') as file:
                 update_kernel = np.copy(full_kernel)
                 update_kernel[position] = flipped_float_kernel_val
                 q_aware_copy.layers[layer_index].trainable_variables[T_VARIABLES_KERNEL_INDEX].assign(update_kernel)
-                # Laplacian calculation
-                original_laplacian = sp.ndimage.laplace(full_kernel[kernel_position])
-                new_laplacian = sp.ndimage.laplace(update_kernel[kernel_position])
-                int_kernel = np.copy(quantized[key][kernel_position])
-                original_int_laplacian = sp.ndimage.laplace(int_kernel)
-                int_kernel[value_position] = flipped_int_kernel_value
-                new_int_laplacian = sp.ndimage.laplace(int_kernel)
-
-                # Appending data
+                # Appending primordial data
                 min_list.append(min_var)
                 max_list.append(max_var)
                 position_list.append(position)
@@ -310,6 +324,21 @@ with open(SAVE_DATA_PATH, 'a') as file:
                 bit_position_list.append(bit_position)
                 flipped_quantized_list.append(flipped_int_kernel_value)
                 flipped_float_weight_list.append(flipped_float_kernel_val)
+                # Laplacian calculation
+                if SAVE_LAPLACIAN_DATA_FLAG:
+                    original_laplacian = sp.ndimage.laplace(full_kernel[kernel_position])
+                    new_laplacian = sp.ndimage.laplace(update_kernel[kernel_position])
+                    int_kernel = np.copy(quantized[key][kernel_position])
+                    original_int_laplacian = sp.ndimage.laplace(int_kernel)
+                    int_kernel[value_position] = flipped_int_kernel_value
+                    new_int_laplacian = sp.ndimage.laplace(int_kernel)
+                    # Append lists
+                    original_laplacian_list.append(original_laplacian[value_position])
+                    new_laplacian_list.append(new_laplacian[value_position])
+                    original_int_laplacian_list.append(original_int_laplacian[value_position])
+                    new_int_laplacian_list.append(new_int_laplacian[value_position])
+                    abs_laplacian_diff_list.append(np.abs(original_laplacian[value_position] - new_laplacian[value_position]))
+                    abs_int_laplacian_diff_list.append(np.abs(original_int_laplacian[value_position] - new_int_laplacian[value_position]))
 
             # Conversion of new model to TF Lite model
             new_converter = tf.lite.TFLiteConverter.from_keras_model(q_aware_copy)
@@ -317,28 +346,30 @@ with open(SAVE_DATA_PATH, 'a') as file:
             new_tflite_model = new_converter.convert()
             new_interpreter = tf.lite.Interpreter(model_content = new_tflite_model)
 
-            # Check new accuracy
+            # Check new accuracy on test set
             q_copy_test_loss, q_copy_test_acc = q_aware_copy.evaluate(test_images, test_labels, verbose = 0)
             print('New Q Aware model test accuracy : ', "{:0.2%}".format(q_copy_test_acc))
             print('New Q Aware model test loss: ', q_copy_test_loss)
-            q_copy_train_loss, q_copy_train_acc = q_aware_copy.evaluate(train_images, train_labels, verbose = 0)
-            print('New Q Aware model train accuracy : ', "{:0.2%}".format(q_copy_train_acc))
-            print('New Q Aware model train loss: ', q_copy_train_loss)
             new_interpreter.allocate_tensors()
             new_tflite_test_loss, new_tflite_test_accuracy = evaluate_model(new_interpreter, test_images, test_labels)
             print('New TFLite model test accuracy:', "{:0.2%}".format(new_tflite_test_accuracy))
             print('New TFLite model test loss: ', new_tflite_test_loss)
-            new_interpreter.allocate_tensors()
-            new_tflite_train_loss, new_tflite_train_accuracy = evaluate_model(new_interpreter, train_images, train_labels)
-            print('New TFLite model train accuracy:', "{:0.2%}".format(new_tflite_train_accuracy))
-            print('New TFLite model train loss: ', new_tflite_train_loss)
+            # Check new accuracy on train set
+            if SAVE_TRAINING_PERFORMANCE_FLAG:
+                q_copy_train_loss, q_copy_train_acc = q_aware_copy.evaluate(train_images, train_labels, verbose = 0)
+                print('New Q Aware model train accuracy : ', "{:0.2%}".format(q_copy_train_acc))
+                print('New Q Aware model train loss: ', q_copy_train_loss)
+                new_interpreter.allocate_tensors()
+                new_tflite_train_loss, new_tflite_train_accuracy = evaluate_model(new_interpreter, train_images, train_labels)
+                print('New TFLite model train accuracy:', "{:0.2%}".format(new_tflite_train_accuracy))
+                print('New TFLite model train loss: ', new_tflite_train_loss)
             
             entry = {}
             entry['name'] = q_aware_copy.name + "_" + str(kernel_idx) + "_" + str(i)
             entry['layer_affected'] = key
             entry['kernel_index'] = kernel_idx
             entry['layer_affected_index'] = layer_index
-            entry['number_bits_flipped'] = N_FLIPS
+            entry['number_bits_flipped'] = N_BITS_TO_FLIP
             entry['position_disrupted'] = position_list
             entry['min_var'] = min_list
             entry['max_var'] = max_list
@@ -353,18 +384,20 @@ with open(SAVE_DATA_PATH, 'a') as file:
             entry['tflite_test_acc_degradation'] = new_tflite_test_accuracy - tflite_test_accuracy
             entry['q_aware_test_loss'] = q_copy_test_loss
             entry['tflite_test_loss'] = new_tflite_test_loss
-            entry['q_aware_train_accuracy'] = q_copy_train_acc
-            entry['tflite_train_accuracy'] = new_tflite_train_accuracy
-            entry['q_aware_train_acc_degradation'] = q_copy_train_acc - q_aware_train_acc
-            entry['tflite_train_acc_degradation'] = new_tflite_train_accuracy - tflite_train_accuracy
-            entry['q_aware_train_loss'] = q_copy_train_loss
-            entry['tflite_train_loss'] = new_tflite_train_loss
-            entry['original_laplacian'] = original_laplacian[value_position]
-            entry['modified_laplacian'] = new_laplacian[value_position]
-            entry['original_int_laplacian'] = original_int_laplacian[value_position]
-            entry['modified_int_laplacian'] = new_int_laplacian[value_position]
-            entry['abs_laplacian_diff'] = np.abs(entry['original_laplacian'] - entry['modified_laplacian'])
-            entry['abs_int_laplacian_diff'] = np.abs(entry['original_int_laplacian'] - entry['modified_int_laplacian'])
+            if SAVE_LAPLACIAN_DATA_FLAG:
+                entry['original_laplacian'] = original_laplacian_list
+                entry['modified_laplacian'] = new_laplacian_list
+                entry['original_int_laplacian'] = original_int_laplacian_list
+                entry['modified_int_laplacian'] = new_int_laplacian_list
+                entry['abs_laplacian_diff'] = abs_laplacian_diff_list
+                entry['abs_int_laplacian_diff'] = abs_int_laplacian_diff_list
+            if SAVE_TRAINING_PERFORMANCE_FLAG:
+                entry['q_aware_train_accuracy'] = q_copy_train_acc
+                entry['tflite_train_accuracy'] = new_tflite_train_accuracy
+                entry['q_aware_train_acc_degradation'] = q_copy_train_acc - q_aware_train_acc
+                entry['tflite_train_acc_degradation'] = new_tflite_train_accuracy - tflite_train_accuracy
+                entry['q_aware_train_loss'] = q_copy_train_loss
+                entry['tflite_train_loss'] = new_tflite_train_loss
 
             # performance_data.append(entry)
             writer.writerow([file_idx] + list(entry.values()))
