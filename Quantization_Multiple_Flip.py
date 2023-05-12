@@ -100,11 +100,11 @@ def random_bit_flipper_uniform(value : int) -> Tuple[int, int]:
 - Number of simulations per layer.
 - Total number of bits that will be flipped randomly from any weight in each layer.
 """
-SAVE_FILE_NAME = 'Performance_Multiple_4.csv'
+SAVE_FILE_NAME = 'Performance_Multiple_5.csv'
 SAVE_TRAINING_PERFORMANCE_FLAG = False
 SAVE_LAPLACIAN_DATA_FLAG = True
-N_SIMULATIONS_PER_LAYER = 2
-N_BITS_TO_FLIP = 20
+N_SIMULATIONS_PER_LAYER = 1
+N_BITS_TO_FLIP = 10
 
 MODELS_DIR = "./model/"
 LOAD_PATH_Q_AWARE = MODELS_DIR + "model_q_aware_final_01"
