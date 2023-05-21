@@ -1,6 +1,8 @@
 import time
 import datetime
 import os
+import sys
+import gc
 import csv
 import numpy as np
 import tensorflow as tf
@@ -337,9 +339,9 @@ Parameters to be tuned:
 - Bit step that will be flipped in the 32 bit element.
 """
 SAVE_FILE_NAME = 'Quantization_Split_Conservative.csv'
-N_SIMULATIONS = 10                                      # Number of repetitions of everything
-N_FLIPS_LIMIT = 20                                      # Maximum value? = 24 x 24 = 576
-BIT_STEPS_PROB = 8                                      # Divisor of 32, from 1 to 32
+N_SIMULATIONS = 20                                      # Number of repetitions of everything
+N_FLIPS_LIMIT = 8                                       # Maximum value? = 24 x 24 = 576
+BIT_STEPS_PROB = 1                                      # Divisor of 32, from 1 to 32
 
 MODELS_DIR = "./model/"
 LOAD_PATH_Q_AWARE = MODELS_DIR + "model_q_aware_final_01"
@@ -403,32 +405,48 @@ model_pt1_nq, model_pt2_q = mix_split_models_generator(q_aware_model, quantized_
 INDEX_KEY_CONV1 = 1
 KEY_CONV1 = new_keys_list[INDEX_KEY_CONV1]
 
+# Batch analysis for testing and avoid memory head overload
+# model.predict(), tf.nn.bias_add(), tf.nn.relu(), and all eager tensor operations may exceed memory allocation
+SET_SIZE = test_images.shape[0]
+N_PARTITIONS = 2
+BATCH_SIZE = SET_SIZE//N_PARTITIONS
 
-out_list = []
-print(semi_quantized_test_images.shape)
-for image in semi_quantized_test_images:
-    val = model_pt1_nq(image[np.newaxis,:])
-    out_list.append(val[0,:,:,:])
-out_list = np.array(out_list)
-print(out_list.shape)
-out_part1 = model_pt1_nq.predict(semi_quantized_test_images, batch_size = 1000)
-print(type(out_part1))
-print(out_part1.shape)
+out_part1 = []
+dequantized_out_part1 = []
+for i in range(N_PARTITIONS):
+    batch_out_part1 = model_pt1_nq.predict(semi_quantized_test_images[i*BATCH_SIZE:(i + 1)*BATCH_SIZE])
+    pre_dequantized_out_part1 = bias_scales[KEY_CONV1] * tf.nn.relu(tf.nn.bias_add(batch_out_part1, quantized_bias[KEY_CONV1]))
+    out_part1.append(batch_out_part1)
+    dequantized_out_part1.append(output_scales[KEY_CONV1] * np.round(pre_dequantized_out_part1 / output_scales[KEY_CONV1]))
 
+out_part1 = np.concatenate(out_part1) # 703.12515 MBi after conversion, 88 bytes before conversion
+dequantized_out_part1 = np.concatenate(dequantized_out_part1) # 703.12515 MBi after conversion, 88 bytes befores pointer because it is a list
 
-dequantized_out_part1 = output_scales[KEY_CONV1] * np.round(bias_scales[KEY_CONV1] * tf.nn.relu(tf.nn.bias_add(out_part1, quantized_bias[KEY_CONV1])) / output_scales[KEY_CONV1])
+# print(hex(id(out_part1)))
+# print(sys.getsizeof(out_part1)/(2**10)**2)
 
 # New base accuracy of split model
 pt2_test_loss, pt2_test_acc = model_pt2_q.evaluate(dequantized_out_part1, test_labels, verbose = 0)
 print('Split new base model test accuracy : ', "{:0.2%}".format(pt2_test_acc))
-print('Split new base model test loss: ', pt2_test_loss)  
+print('Split new base model test loss: ', pt2_test_loss)
 
-# # Comparing both outputs
-# out_model_1 = model_pt2_q.predict(dequantized_out_part1)
-# out_model_2 = q_aware_model.predict(test_images)
-# # Test differences
-# evaluate_separation_error(q_aware_model, test_images, out_model_2, dequantized_out_part1, out_model_1)
-# check_differences(out_model_1, out_model_2)
+# Deletion of unsused variable to diminish RAM usage, highest memory value so far
+del batch_out_part1 # 351.5626 MBi Numpy array, all the batch_out_part1 elements are referenced inside out_part1
+del pre_dequantized_out_part1 # 168 bytes Eager Tensor It's a pointer: points to variable of 400 Mbi aprox
+del q_aware_model # 48 bytes
+del model_pt1_nq # 48 bytes
+del interpreter # 48 bytes
+del train_images # 358.8868 MBi
+del test_images # 59.8145 MBi
+del quantized_weights # 488 bytes
+del semi_quantized_test_images # 29.9073 MBi
+del dequantized_out_part1 # 703.125 MBi
+
+# Garbage collection
+tf.keras.backend.clear_session()
+gc.collect()
+if tf.config.list_physical_devices('GPU'):
+    tf.config.experimental.reset_memory_stats('GPU:0')
 
 # Original model variables
 entry_keys = [
@@ -443,7 +461,7 @@ entry_keys = [
     'q_aware_test_loss'
 ]
 original_entry = {
-    entry_keys[0] : q_aware_model.name + "-original",
+    entry_keys[0] : "original",
     entry_keys[1] : None,
     entry_keys[2] : None,
     entry_keys[3] : None,
@@ -454,7 +472,7 @@ original_entry = {
     entry_keys[8] : (q_aware_test_loss, tflite_test_loss),
 }
 base_entry = {
-    entry_keys[0] : model_pt1_nq.name + "-" + model_pt2_q.name,
+    entry_keys[0] : "model pt1-nq + pt2-q",
     entry_keys[1] : None,
     entry_keys[2] : None,
     entry_keys[3] : None,
@@ -470,12 +488,10 @@ total_time = time.time()
 
 # File writing and simulation
 FILE_EXISTS_FLAG = os.path.exists(SAVE_DATA_PATH)
-SET_SIZE = out_part1.shape[0]
 CHANNELS_OUTPUT_SIZE = out_part1.shape[-1]
 FILE_DELIMITER = ";"
 # Probabilities variables
 set_values_bits = np.arange(BIT_STEPS_PROB - 1, BIAS_BIT_WIDTH, BIT_STEPS_PROB)
-probabilities = np.ones(len(set_values_bits))/len(set_values_bits)
 
 last_index = recover_file_last_index(FILE_EXISTS_FLAG, SAVE_DATA_PATH, FILE_DELIMITER)
 with open(SAVE_DATA_PATH, 'a') as main_file:
@@ -487,12 +503,6 @@ with open(SAVE_DATA_PATH, 'a') as main_file:
         file_idx = 0
     else:
         file_idx = last_index + 1
-
-    # # Save output positions
-    # with open(SAVE_POSITIONS_DATA_PATH, 'w') as position_file:
-    #     position_writer = csv.writer(position_file, delimiter = FILE_DELIMITER, lineterminator = '\n')
-    #     sub_entry_keys = ['simulation_number', 'set_element', 'n_bits_flipped', 'bit_disrupted', 'position_disrupted']
-    #     position_writer.writerow(sub_entry_keys)
 
     # JUST FOR FIRST LAYER
     layer_index = new_layer_index_list[INDEX_KEY_CONV1]
@@ -507,12 +517,9 @@ with open(SAVE_DATA_PATH, 'a') as main_file:
                 out_part1_copy = np.copy(out_part1)
                 print("Simulation number", simulation_number, KEY_CONV1, INDEX_KEY_CONV1)
                 for element_set in range(SET_SIZE):
-                    # List definitions
-                    position_list = []
                     for k in range(n_flips):
                         
                         # Convolutional layer random position
-                        # element_set = np.random.randint(0, SET_SIZE)
                         kernel_row = np.random.randint(0, output_shapes[KEY_CONV1][1])
                         kernel_column = np.random.randint(0, output_shapes[KEY_CONV1][2])
                         channel_output = np.random.randint(0, output_shapes[KEY_CONV1][3])
@@ -520,32 +527,36 @@ with open(SAVE_DATA_PATH, 'a') as main_file:
                         kernel_position = (element_set, slice(None), slice(None), channel_output)
 
                         # Flipped values calculation
-                        # bit_position = np.random.choice(set_values_bits, p = probabilities).item()
                         flipped_int = n_bit_flipper(int(out_part1_copy[position]), BIAS_BIT_WIDTH, bit_position)
                         
                         # New int update value
                         out_part1_copy[position] = flipped_int
-                        # Appending primordial data
-                        position_list.append(position)
-
-                    # # Save subentries for each value flipped
-                    # sub_entry = {
-                    #     sub_entry_keys[0] : simulation_number,
-                    #     sub_entry_keys[1] : element_set,
-                    #     sub_entry_keys[2] : n_flips,
-                    #     sub_entry_keys[3] : bit_position,
-                    #     sub_entry_keys[4] : position_list,
-                    # }
-                    # position_writer.writerow(list(sub_entry.values()))
                 
                 # Calculation of the dequantized output of part 1
-                new_dequantized_out_part1 = output_scales[KEY_CONV1] * np.round(bias_scales[KEY_CONV1] * tf.nn.relu(tf.nn.bias_add(out_part1_copy, quantized_bias[KEY_CONV1])) / output_scales[KEY_CONV1])
-                # new_out_part2 = model_pt2_q.predict(new_dequantized_out_part1)
-
+                # Must be done in batches
+                new_dequantized_out_part1 = []
+                for i in range(N_PARTITIONS):
+                    new_batch_out_part1 = out_part1_copy[i*BATCH_SIZE:(i + 1)*BATCH_SIZE]
+                    new_pre_dequantized_out_part1 = bias_scales[KEY_CONV1] * tf.nn.relu(tf.nn.bias_add(new_batch_out_part1, quantized_bias[KEY_CONV1]))
+                    new_dequantized_out_part1.append(output_scales[KEY_CONV1] * np.round(new_pre_dequantized_out_part1 / output_scales[KEY_CONV1]))
+                new_dequantized_out_part1 = np.concatenate(new_dequantized_out_part1)
+                
                 # Check new accuracy on test set
                 new_pt2_test_loss, new_pt2_test_acc = model_pt2_q.evaluate(new_dequantized_out_part1, test_labels, verbose = 0)
                 print('Split disturbed model test accuracy : ', "{:0.2%}".format(new_pt2_test_acc))
-                print('Split disturbed model test loss: ', new_pt2_test_loss)  
+                print('Split disturbed model test loss: ', new_pt2_test_loss)
+                
+                # Deletion of unsused memory
+                del new_batch_out_part1
+                del new_pre_dequantized_out_part1
+                del out_part1_copy # 703.12515 MBi
+                del new_dequantized_out_part1 # 703.12515 MBi
+
+                # Garbage collection
+                tf.keras.backend.clear_session()
+                gc.collect()
+                if tf.config.list_physical_devices('GPU'):
+                    tf.config.experimental.reset_memory_stats('GPU:0')
 
                 entry = {
                     entry_keys[0] : str(simulation_number) + "_" + datetime.datetime.now().strftime("%Y%m%d %H:%M:%S"),
