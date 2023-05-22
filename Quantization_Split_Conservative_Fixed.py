@@ -339,8 +339,8 @@ Parameters to be tuned:
 - Bit step that will be flipped in the 32 bit element.
 """
 SAVE_FILE_NAME = 'Quantization_Split_Conservative.csv'
-N_SIMULATIONS = 20                                      # Number of repetitions of everything
-N_FLIPS_LIMIT = 8                                       # Maximum value? = 24 x 24 = 576
+N_SIMULATIONS = 50                                      # Number of repetitions of everything
+N_FLIPS_LIMIT = 8                                       # Maximum total number of flips per simulation
 BIT_STEPS_PROB = 1                                      # Divisor of 32, from 1 to 32
 
 MODELS_DIR = "./model/"
@@ -348,8 +348,6 @@ LOAD_PATH_Q_AWARE = MODELS_DIR + "model_q_aware_final_01"
 LOAD_TFLITE_PATH = MODELS_DIR + 'tflite_final_01.tflite'
 OUTPUTS_DIR = "./outputs/"
 SAVE_DATA_PATH = OUTPUTS_DIR + SAVE_FILE_NAME
-# SAVE_POSITIONS_FILE_NAME = 'PositionsLog_' + datetime.datetime.now().strftime("%Y%m%d_%H-%M-%S") + '.csv'
-# SAVE_POSITIONS_DATA_PATH = OUTPUTS_DIR + SAVE_POSITIONS_FILE_NAME
 
 if not os.path.exists(OUTPUTS_DIR):
     os.mkdir(OUTPUTS_DIR)
@@ -414,12 +412,16 @@ BATCH_SIZE = SET_SIZE//N_PARTITIONS
 out_part1 = []
 dequantized_out_part1 = []
 for i in range(N_PARTITIONS):
-    batch_out_part1 = model_pt1_nq.predict(semi_quantized_test_images[i*BATCH_SIZE:(i + 1)*BATCH_SIZE])
-    pre_dequantized_out_part1 = bias_scales[KEY_CONV1] * tf.nn.relu(tf.nn.bias_add(batch_out_part1, quantized_bias[KEY_CONV1]))
+    # output type is float32, there is no conflict as the results are convolution sumations and multiplication of 8 bit numbers
+    # No rounding problem as the maximum int value is as big as 18 bits
+    # Bigger values than 24 bits will produce rounding error when using tf.float32 number values
+    batch_out_part1 = model_pt1_nq.predict(semi_quantized_test_images[i*BATCH_SIZE:(i + 1)*BATCH_SIZE]) # np.float32
+    # Multiplication of an eager tensor by a numpy array will yield the same output dtype as of the eager tensor regardless of the numpy array dtype 
+    pre_dequantized_out_part1 = bias_scales[KEY_CONV1] * tf.nn.relu(tf.nn.bias_add(batch_out_part1, quantized_bias[KEY_CONV1])) # tf.float32
     out_part1.append(batch_out_part1)
     dequantized_out_part1.append(output_scales[KEY_CONV1] * np.round(pre_dequantized_out_part1 / output_scales[KEY_CONV1]))
 
-out_part1 = np.concatenate(out_part1) # 703.12515 MBi after conversion, 88 bytes before conversion
+out_part1 = np.concatenate(out_part1).astype(np.int32) # 703.12515 MBi after conversion, 88 bytes before conversion. Important it must be int32 for flipping values later and avoiding rounding error when using float32
 dequantized_out_part1 = np.concatenate(dequantized_out_part1) # 703.12515 MBi after conversion, 88 bytes befores pointer because it is a list
 
 # print(hex(id(out_part1)))
@@ -491,7 +493,8 @@ FILE_EXISTS_FLAG = os.path.exists(SAVE_DATA_PATH)
 CHANNELS_OUTPUT_SIZE = out_part1.shape[-1]
 FILE_DELIMITER = ";"
 # Probabilities variables
-set_values_bits = np.arange(BIT_STEPS_PROB - 1, BIAS_BIT_WIDTH, BIT_STEPS_PROB)
+# set_values_bits = np.arange(BIT_STEPS_PROB - 1, BIAS_BIT_WIDTH, BIT_STEPS_PROB)
+set_values_bits = np.arange(24, BIAS_BIT_WIDTH, BIT_STEPS_PROB)
 
 last_index = recover_file_last_index(FILE_EXISTS_FLAG, SAVE_DATA_PATH, FILE_DELIMITER)
 with open(SAVE_DATA_PATH, 'a') as main_file:
@@ -537,9 +540,16 @@ with open(SAVE_DATA_PATH, 'a') as main_file:
                 new_dequantized_out_part1 = []
                 for i in range(N_PARTITIONS):
                     new_batch_out_part1 = out_part1_copy[i*BATCH_SIZE:(i + 1)*BATCH_SIZE]
-                    new_pre_dequantized_out_part1 = bias_scales[KEY_CONV1] * tf.nn.relu(tf.nn.bias_add(new_batch_out_part1, quantized_bias[KEY_CONV1]))
+                    # Use numpy() because the values the multiplication of np.array() with eager tensor will preserve tensor dtype.
+                    # On the other hand multiplying 2 np.arrays() will preserve the highest memory requirement
+                    new_pre_dequantized_out_part1 = (bias_scales[KEY_CONV1] * tf.nn.relu(tf.nn.bias_add(new_batch_out_part1, quantized_bias[KEY_CONV1])).numpy()).astype(np.float32)
                     new_dequantized_out_part1.append(output_scales[KEY_CONV1] * np.round(new_pre_dequantized_out_part1 / output_scales[KEY_CONV1]))
-                new_dequantized_out_part1 = np.concatenate(new_dequantized_out_part1)
+                new_dequantized_out_part1 = np.concatenate(new_dequantized_out_part1).astype(np.float32)
+                
+                # Deletion of unsused memory
+                del out_part1_copy # 703.12515 MBi
+                del new_batch_out_part1 # 160 bytes
+                del new_pre_dequantized_out_part1 # 351.562652 MBi
                 
                 # Check new accuracy on test set
                 new_pt2_test_loss, new_pt2_test_acc = model_pt2_q.evaluate(new_dequantized_out_part1, test_labels, verbose = 0)
@@ -547,9 +557,6 @@ with open(SAVE_DATA_PATH, 'a') as main_file:
                 print('Split disturbed model test loss: ', new_pt2_test_loss)
                 
                 # Deletion of unsused memory
-                del new_batch_out_part1
-                del new_pre_dequantized_out_part1
-                del out_part1_copy # 703.12515 MBi
                 del new_dequantized_out_part1 # 703.12515 MBi
 
                 # Garbage collection
@@ -559,7 +566,7 @@ with open(SAVE_DATA_PATH, 'a') as main_file:
                     tf.config.experimental.reset_memory_stats('GPU:0')
 
                 entry = {
-                    entry_keys[0] : str(simulation_number) + "_" + datetime.datetime.now().strftime("%Y%m%d %H:%M:%S"),
+                    entry_keys[0] : str(simulation_number) + "_" + datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                     entry_keys[1] : KEY_CONV1,
                     entry_keys[2] : INDEX_KEY_CONV1,
                     entry_keys[3] : layer_index,
