@@ -324,6 +324,61 @@ def recover_file_last_index(file_exists_flag: bool, save_data_path : str, file_d
         last_index = 0
     return int(last_index)
 
+def garbage_collection():
+    """ Manual garbage collection
+    -
+    Absolute necessary to free RAM during execution
+    """
+    # Garbage collection
+    tf.keras.backend.clear_session()
+    gc.collect()
+    if tf.config.list_physical_devices('GPU'):
+        tf.config.experimental.reset_memory_stats('GPU:0')
+
+def model_partial_predict(q_aware_model: tf.keras.Model, input_set: np.ndarray, layer_index_start: int) -> np.ndarray:
+    """ Predicts one output from a keras model assuming the prediction starts from a given layer
+    -
+    - It is assumed that the shapes coincide
+    - Need to add assertion of shape compatibility in the future
+    """
+    LIMIT_INDEX = len(q_aware_model.layers)
+    for i in range(layer_index_start, LIMIT_INDEX):
+        if i == layer_index_start:
+            partial_output = q_aware_model.layers[i](input_set)
+        else:
+            partial_output = q_aware_model.layers[i](partial_output)
+
+    return partial_output.numpy()
+
+def model_partial_evaluate(q_aware_model: tf.keras.Model, layer_index_start: int, input_set : np.ndarray, test_labels : np.ndarray) -> Tuple[float, float]:
+    """ Evaluate Keras Model from partial input manually:
+    -
+    - Receives a keras model and returns a tuple of loss and accuracy.
+    """
+    # Run predictions on every input element of the set
+    prediction_digits = []
+    predictions = []
+    
+    output = model_partial_predict(q_aware_model, input_set, layer_index_start)
+
+    # entropy = []
+    for i, out in enumerate(output):
+        digit = np.argmax(out)
+        predictions.append(out)
+        prediction_digits.append(digit)
+        # entropy.append(-np.log(out[test_labels[i]]/np.sum(out)))
+
+    # Compare prediction results with ground truth labels to calculate accuracy.
+    prediction_digits = np.array(prediction_digits)
+    predictions = np.array(predictions)
+    scce = tf.keras.losses.SparseCategoricalCrossentropy()(test_labels, predictions)
+    # entropy = np.array(entropy)
+    # print(np.average(entropy))
+
+    loss = scce.numpy()
+    accuracy = (prediction_digits == test_labels).mean()
+    return loss, accuracy
+
 """ Test to affect convolution on first layer. 
 -
 Conservative: 
@@ -338,8 +393,8 @@ Parameters to be tuned:
 - Limit of number of flips in total.
 - Bit step that will be flipped in the 32 bit element.
 """
-SAVE_FILE_NAME = 'Quantization_Split_Conservative.csv'
-N_SIMULATIONS = 50                                      # Number of repetitions of everything
+SAVE_FILE_NAME = 'Quantization_Split_Conservative_No_InQuantize.csv'
+N_SIMULATIONS = 20                                      # Number of repetitions of everything
 N_FLIPS_LIMIT = 8                                       # Maximum total number of flips per simulation
 BIT_STEPS_PROB = 1                                      # Divisor of 32, from 1 to 32
 
@@ -416,7 +471,7 @@ for i in range(N_PARTITIONS):
     # No rounding problem as the maximum int value is as big as 18 bits
     # Bigger values than 24 bits will produce rounding error when using tf.float32 number values
     batch_out_part1 = model_pt1_nq.predict(semi_quantized_test_images[i*BATCH_SIZE:(i + 1)*BATCH_SIZE]) # np.float32
-    # Multiplication of an eager tensor by a numpy array will yield the same output dtype as of the eager tensor regardless of the numpy array dtype 
+    # Multiplication of an eager tensor by a numpy array will yield the same output dtype as of the eager tensor regardless of the numpy array dtype
     pre_dequantized_out_part1 = bias_scales[KEY_CONV1] * tf.nn.relu(tf.nn.bias_add(batch_out_part1, quantized_bias[KEY_CONV1])) # tf.float32
     out_part1.append(batch_out_part1)
     dequantized_out_part1.append(output_scales[KEY_CONV1] * np.round(pre_dequantized_out_part1 / output_scales[KEY_CONV1]))
@@ -428,7 +483,8 @@ dequantized_out_part1 = np.concatenate(dequantized_out_part1) # 703.12515 MBi af
 # print(sys.getsizeof(out_part1)/(2**10)**2)
 
 # New base accuracy of split model
-pt2_test_loss, pt2_test_acc = model_pt2_q.evaluate(dequantized_out_part1, test_labels, verbose = 0)
+FIRST_MAX_POOL_INDEX = 3
+pt2_test_loss, pt2_test_acc = model_partial_evaluate(q_aware_model, layer_index_start = FIRST_MAX_POOL_INDEX, input_set = dequantized_out_part1, test_labels = test_labels)
 print('Split new base model test accuracy : ', "{:0.2%}".format(pt2_test_acc))
 print('Split new base model test loss: ', pt2_test_loss)
 
@@ -440,15 +496,11 @@ del semi_quantized_test_images # 29.9073 MBi
 del batch_out_part1 # 351.5626 MBi Numpy array, all the batch_out_part1 elements are referenced inside out_part1
 del pre_dequantized_out_part1 # 168 bytes Eager Tensor It's a pointer: points to variable of 400 Mbi aprox
 del dequantized_out_part1 # 703.125 MBi
-del q_aware_model # 48 bytes
 del interpreter # 48 bytes
 del model_pt1_nq # 48 bytes
+del model_pt2_q # 48 bytes
 
-# Garbage collection
-tf.keras.backend.clear_session()
-gc.collect()
-if tf.config.list_physical_devices('GPU'):
-    tf.config.experimental.reset_memory_stats('GPU:0')
+garbage_collection()
 
 # Original model variables
 entry_keys = [
@@ -551,18 +603,14 @@ with open(SAVE_DATA_PATH, 'a') as main_file:
                 del new_pre_dequantized_out_part1 # 351.562652 MBi
                 
                 # Check new accuracy on test set
-                new_pt2_test_loss, new_pt2_test_acc = model_pt2_q.evaluate(new_dequantized_out_part1, test_labels, verbose = 0)
+                new_pt2_test_loss, new_pt2_test_acc = model_partial_evaluate(q_aware_model, layer_index_start = FIRST_MAX_POOL_INDEX, input_set = new_dequantized_out_part1, test_labels = test_labels)
                 print('Split disturbed model test accuracy : ', "{:0.2%}".format(new_pt2_test_acc))
                 print('Split disturbed model test loss: ', new_pt2_test_loss)
                 
                 # Deletion of unsused memory
                 del new_dequantized_out_part1 # 703.12515 MBi
 
-                # Garbage collection
-                tf.keras.backend.clear_session()
-                gc.collect()
-                if tf.config.list_physical_devices('GPU'):
-                    tf.config.experimental.reset_memory_stats('GPU:0')
+                garbage_collection()
 
                 entry = {
                     entry_keys[0] : str(simulation_number) + "_" + datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
