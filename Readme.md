@@ -20,10 +20,13 @@ Parameters to be tuned:
 - Number of simulations = repetitions.
 - Limit of number of flips in total.
 - Bit step that will be flipped in the 32 bit element.
-- Operation mode.
+- Operation mode:
+    * 0 = 2nd part quantized: The second part will operate with an input-quantizing-layer with floating point weights.
+    * 1 = 2nd part no input quantized: the second part will operate with floating point weights without an input-quantizing-layer.
+    * 2 = 2nd part manual saturation: the second part will operate with floating point weights but their values are previously manually saturated.
+    * 3 = 2nd part multichannel relu: applying an integer manual multichannel relu activation function.
 
-Select the operation mode:
-* 0 = 2nd part quantized: The second part will operate with an input quantizing layer with floating point weights.
-* 1 = 2nd part no input quantized: the second part will operate with floating point weights without an input quantizing layer.
-* 2 = 2nd part manual saturation: the second part will operate with floating point weights but their values are previously manually saturated.
-* 3 = 2nd part multichannel relu: applying an integer manual multichannel relu activation function.
+# IMPORTANT
+- The operation mode to test the new relu operation with integer saturation limit values is OPERATION_MODE = 3
+- With OPERATION_MODE != 3, N_FLIPS_LIMIT = 4, BIT_STEPS_PROB = 1 each simulation takes around 7.5 minutes.
+- With OPERATION_MODE = 3, N_FLIPS_LIMIT = 4, BIT_STEPS_PROB = 1 each simulation takes around 11 minutes.

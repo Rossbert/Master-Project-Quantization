@@ -8,30 +8,28 @@ import tensorflow_model_optimization as tfmot
 import Quantization
 from keras.engine.functional import Functional
 
-""" Test to affect convolution on first layer. 
--
-* All outputs on the test set will be affected
+""" Test to affect convolution operation on first layer. 
+
+* All the 10000 outputs on the test set will be affected
 * The output channels are generated randomly
 * The positions are also generated randomly
-* The bit positions to flip belong to a fixed set and are the same per each simulation.
+* The program iterates through all the bit positions for each 32-bit convolution result
 
 Parameters to be tuned:
 - Number of simulations = repetitions.
 - Limit of number of flips in total.
 - Bit step that will be flipped in the 32 bit element.
-- Operation mode.
-
-Select the operation mode:
-* 0 = 2nd part quantized: The second part will operate with an input quantizing layer with floating point weights.
-* 1 = 2nd part no input quantized: the second part will operate with floating point weights without an input quantizing layer.
-* 2 = 2nd part manual saturation: the second part will operate with floating point weights but their values are previously manually saturated.
-* 3 = 2nd part multichannel relu: applying an integer manual multichannel relu activation function.
+- Operation mode:
+    * 0 = 2nd part quantized: The second part will operate with an input-quantizing-layer with floating point weights.
+    * 1 = 2nd part no input quantized: the second part will operate with floating point weights without an input-quantizing-layer.
+    * 2 = 2nd part manual saturation: the second part will operate with floating point weights but their values are previously manually saturated.
+    * 3 = 2nd part multichannel relu: applying an integer manual multichannel relu activation function.
 """
-OPERATION_MODE = 1                                      # Modification of operation mode
-
 N_SIMULATIONS = 20                                      # Number of repetitions of everything
 N_FLIPS_LIMIT = 4                                       # Maximum total number of flips per simulation
 BIT_STEPS_PROB = 1                                      # Divisor of 32, from 1 to 32
+
+OPERATION_MODE = 3                                      # Modification of operation mode
 
 # Quantification constants
 BIAS_BIT_WIDTH = 32
