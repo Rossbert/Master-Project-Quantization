@@ -16,30 +16,37 @@ from keras.engine.functional import Functional
 * The bit positions to flip belong to a fixed set and are the same per each simulation.
 
 Parameters to be tuned:
-- Regarding the output file name, if you don't update the name manually the previous file won't be deleted. New data will be appended to the end of the file instead.
 - Number of simulations = repetitions.
 - Limit of number of flips in total.
 - Bit step that will be flipped in the 32 bit element.
-"""
+- Operation mode.
 
-SAVE_FILE_NAME = f"Quant_Split_{datetime.datetime.now().strftime('%Y-%m-%d_%H')}.csv"
-N_SIMULATIONS = 2                                       # Number of repetitions of everything
+Select the operation mode:
+* 0 = 2nd part quantized: The second part will operate with an input quantizing layer with floating point weights.
+* 1 = 2nd part no input quantized: the second part will operate with floating point weights without an input quantizing layer.
+* 2 = 2nd part manual saturation: the second part will operate with floating point weights but their values are previously manually saturated.
+* 3 = 2nd part multichannel relu: applying an integer manual multichannel relu activation function.
+"""
+OPERATION_MODE = 1                                      # Modification of operation mode
+
+N_SIMULATIONS = 20                                      # Number of repetitions of everything
 N_FLIPS_LIMIT = 4                                       # Maximum total number of flips per simulation
 BIT_STEPS_PROB = 1                                      # Divisor of 32, from 1 to 32
 
-MODELS_DIR = "./model/"
-LOAD_PATH_Q_AWARE = MODELS_DIR + "model_q_aware_final_01"
-LOAD_TFLITE_PATH = MODELS_DIR + 'tflite_final_01.tflite'
-OUTPUTS_DIR = "./outputs/"
-SAVE_DATA_PATH = OUTPUTS_DIR + SAVE_FILE_NAME
-
-# Program related constants
 # Quantification constants
 BIAS_BIT_WIDTH = 32
 # Number of partitions for batch analysis
 N_PARTITIONS = 2
 # Convolutional key
 INDEX_KEY_CONV1 = 1
+# First index of q_aware_model
+SPLIT_INDEX = 3
+
+OUTPUTS_DIR = "./outputs/"
+LOAD_PATH_Q_AWARE = "./model/model_q_aware_final_01"
+operation_mode = Quantization.ModelEvaluationMode(OPERATION_MODE)
+SAVE_FILE_NAME = f"QSplit_{operation_mode.name}_{datetime.datetime.now().strftime('%Y-%m-%d')}.csv"
+SAVE_DATA_PATH = OUTPUTS_DIR + SAVE_FILE_NAME
 
 if not os.path.exists(OUTPUTS_DIR):
     os.mkdir(OUTPUTS_DIR)
@@ -63,11 +70,16 @@ q_model_info = Quantization.QuantizedModelInfo(q_aware_model)
 quantized_test_images = np.round(test_images[:,:,:,np.newaxis]/q_model_info.output_scales[q_model_info.keys[0]]).astype(int)
 
 # Generating the split models
-m1_nonquant, m2_quant = Quantization.mix_split_models_generator(q_aware_model, q_model_info)
+m1_nonquant, m2_quant = Quantization.mix_split_models_generator(q_aware_model, q_model_info, start_index = SPLIT_INDEX)
 
 # Generating the quantized convolution output for the test set, as the test set is unique so is the quantized output of the convolution
 KEY_CONV1 = q_model_info.keys[INDEX_KEY_CONV1]
 SET_SIZE = test_labels.shape[0]
+
+if operation_mode == Quantization.ModelEvaluationMode.m2_quantized:
+    model_2 = m2_quant
+else:
+    model_2 = q_aware_model
 
 quant_conv1, test_loss, test_accuracy = Quantization.prediction_by_batches(
     data_input = quantized_test_images,
@@ -76,7 +88,9 @@ quant_conv1, test_loss, test_accuracy = Quantization.prediction_by_batches(
     q_model_info = q_model_info,
     scales_key = KEY_CONV1,
     model_1 = m1_nonquant,
-    model_2 = m2_quant,
+    model_2 = model_2,
+    evaluation_mode = operation_mode,
+    start_index = SPLIT_INDEX
     )
 
 print(f"Model test accuracy: {test_accuracy:.2%}")
@@ -168,7 +182,9 @@ with open(SAVE_DATA_PATH, 'a', newline = '') as main_file:
                     q_model_info = q_model_info,
                     scales_key = KEY_CONV1,
                     model_1 = None,
-                    model_2 = m2_quant,
+                    model_2 = model_2,
+                    evaluation_mode = operation_mode,
+                    start_index = SPLIT_INDEX
                     )
 
                 print(f"Disturbed model test accuracy: {new_test_accuracy:.2%}")

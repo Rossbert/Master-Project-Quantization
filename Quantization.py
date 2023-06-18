@@ -10,9 +10,20 @@ import gc
 from enum import Enum
 
 class ModelEvaluationMode(Enum):
-    _2_quantized : int = 0
+    """ Model Evaluation Mode
+    - The original model will be split in 2 parts:
+        * The first one will have quantized inputs
+        * The second part will follow a behavior according to the Enum case
+    - Modify the enum value to indicate the mode of evaluation of data:
+        * m2_quantized: The second part will operate with an input quantizing layer with floating point weights.
+        * no_input_saturation: the second part will operate with floating point weights without an input quantizing layer.
+        * manual_saturation: the second part will operate with floating point weights but their values are previously manually saturated.
+        * multi_relu: applying an integer manual multichannel relu activation function.
+    """
+    m2_quantized : int = 0
     no_input_saturation : int = 1
     manual_saturation : int = 2
+    multi_relu : int = 3
 
 class QuantizedModelInfo():
     """ Quantized Model Info Class
@@ -59,14 +70,16 @@ class QuantizedModelInfo():
         self.output_scales : OrderedDict[str, float] = OrderedDict()
         self.output_max : OrderedDict[str, float] = OrderedDict()
         self.output_min : OrderedDict[str, float] = OrderedDict()
-        self.quantized_output_max : OrderedDict[str, float] = OrderedDict()
-        self.quantized_output_min : OrderedDict[str, float] = OrderedDict()
+        self.dequantized_output_max : OrderedDict[str, float] = OrderedDict()
+        self.dequantized_output_min : OrderedDict[str, float] = OrderedDict()
+        self.quantized_post_activ_max : OrderedDict[str, int] = OrderedDict()
+        self.quantized_post_activ_min : OrderedDict[str, int] = OrderedDict()
         self.input_zeros : OrderedDict[str, int] = OrderedDict()
         self.output_zeros : OrderedDict[str, int] = OrderedDict()
         self.kernel_max_vars : OrderedDict[str, npt.NDArray[np.float32]] = OrderedDict()
         self.kernel_min_vars : OrderedDict[str, npt.NDArray[np.float32]] = OrderedDict()
         self.kernel_scales : OrderedDict[str, npt.NDArray[np.float32]] = OrderedDict()
-        self.bias_scales : OrderedDict[str, npt.NDArray[np.float32]] = OrderedDict()
+        self.bias_scales : OrderedDict[str, npt.NDArray[np.float64]] = OrderedDict()
 
         for i, index in enumerate(self.layers_indexes):
             key = self.keys[i]
@@ -86,6 +99,9 @@ class QuantizedModelInfo():
                         kernel_min_var = nt_variable
                     if "kernel_max" in nt_variable.name:
                         kernel_max_var = nt_variable
+            self.output_scales[key] = ((max_var - min_var).numpy()/(2**bit_width - 1)).astype(np.float32)
+            self.dequantized_output_max[key] = self.output_scales[key]*np.round(max_var.numpy()/self.output_scales[key])
+            self.dequantized_output_min[key] = self.output_scales[key]*np.round(min_var.numpy()/self.output_scales[key])
             if i != 0:
                 self.input_scales[key] = self.output_scales[self.keys[i - 1]]
                 self.input_max[key] = self.output_max[self.keys[i - 1]]
@@ -94,12 +110,11 @@ class QuantizedModelInfo():
                 self.kernel_max_vars[key] = kernel_max_var.numpy()
                 self.kernel_min_vars[key] = kernel_min_var.numpy()
                 self.kernel_scales[key] = (kernel_max_var - kernel_min_var).numpy()/(2**bit_width - 2)
-                self.bias_scales[key] = self.input_scales[key]*self.kernel_scales[key]
-            self.output_scales[key] = ((max_var - min_var).numpy()/(2**bit_width - 1)).astype(np.float32)
+                self.bias_scales[key] = self.input_scales[key].astype(np.float64)*self.kernel_scales[key].astype(np.float)
+                self.quantized_post_activ_max[key] = np.round(self.dequantized_output_max[key]/self.bias_scales[key]).astype(int)
+                self.quantized_post_activ_min[key] = np.round(self.dequantized_output_min[key]/self.bias_scales[key]).astype(int)
             self.output_max[key] = max_var.numpy()
             self.output_min[key] = min_var.numpy()
-            self.quantized_output_max[key] = self.output_scales[key]*np.round(max_var.numpy()/self.output_scales[key])
-            self.quantized_output_min[key] = self.output_scales[key]*np.round(min_var.numpy()/self.output_scales[key])
             self.output_zeros[key] = -(2**(bit_width - 1) + np.round(min_var.numpy()/self.output_scales[key]).astype(int))
 
     def generate_quantized_weights_and_biases(self, bit_width : int = 8) -> None:
@@ -241,7 +256,7 @@ def evaluate_model(interpreter: tf.lite.Interpreter, test_images : np.ndarray, t
     accuracy = (prediction_digits == test_labels).mean()
     return loss, accuracy
 
-def mix_split_models_generator(q_aware_model : Functional | tf.keras.Model, q_model_info : QuantizedModelInfo) -> Tuple[tf.keras.Model, tf.keras.Model]:
+def mix_split_models_generator(q_aware_model : Functional | tf.keras.Model, q_model_info : QuantizedModelInfo, start_index : int = 3) -> Tuple[tf.keras.Model, tf.keras.Model]:
     """ Mixed model generation
     -
     Generates first model as non quantized and second model as quantized.
@@ -253,8 +268,6 @@ def mix_split_models_generator(q_aware_model : Functional | tf.keras.Model, q_mo
     INDEX_FIRST_CONV_PT1_MODEL = 1
     INDEX_QUANTIZE_LAYER_PT2_MODEL = 1
     PT2_LENGTH = len(q_aware_model.layers) - 3
-    START_INDEX_ORIGINAL_MODEL_PT2 = 3
-    START_INDEX_PT2_MODEL = 2
 
     input_layer = tf.keras.layers.Input(shape = (28, 28, 1))
     conv_1 = tf.keras.layers.Conv2D(32, 5, use_bias = False, activation = None)(input_layer)
@@ -279,8 +292,8 @@ def mix_split_models_generator(q_aware_model : Functional | tf.keras.Model, q_mo
     nq_model_part1.layers[INDEX_FIRST_CONV_PT1_MODEL].set_weights([q_model_info.quantized_weights[key]])
     
     # Assignation of max and min values for quantization layer for part 2 model
-    indexes_original_part2 = list(range(START_INDEX_ORIGINAL_MODEL_PT2, START_INDEX_ORIGINAL_MODEL_PT2 + PT2_LENGTH))
-    indexes_new_part2 = list(range(START_INDEX_PT2_MODEL, START_INDEX_PT2_MODEL + PT2_LENGTH))
+    indexes_original_part2 = list(range(start_index, start_index + PT2_LENGTH))
+    indexes_new_part2 = list(range(start_index - 1, start_index - 1 + PT2_LENGTH))
     quantize_layer_max_min = q_aware_model.layers[INDEX_FIRST_CONV_ORIGINAL_MODEL].get_weights()[-2:]
     quantize_layer_max_min.append(-1)
     q_model_part2.layers[INDEX_QUANTIZE_LAYER_PT2_MODEL].set_weights(quantize_layer_max_min)
@@ -395,18 +408,17 @@ q_model_info : QuantizedModelInfo,
 scales_key : str, 
 model_1 : tf.keras.Model | None = None,
 model_2 : tf.keras.Model | None = None,
-evaluation_mode : ModelEvaluationMode = ModelEvaluationMode._2_quantized,
-start_index : int = 0) -> Tuple[npt.NDArray[np.int32], npt.NDArray[np.float32]]:
+evaluation_mode : ModelEvaluationMode = ModelEvaluationMode.m2_quantized,
+start_index : int = 3) -> Tuple[npt.NDArray[np.int32], npt.NDArray[np.float32]]:
     """ Evaluates the model and deletes memory unused
     """
     # Batch analysis for testing and avoid memory head overload
     # model.predict(), tf.nn.bias_add(), tf.nn.relu(), and all eager tensor operations may exceed memory allocation
     BATCH_SIZE = test_labels.shape[0]//n_partitions
-
     # Calculation of the dequantized output of part 1
     # Must be done in batches
     quant_conv1 : List[npt.NDArray[np.float32]] | npt.NDArray[np.int32] = []
-    dequant_activ1 : List[npt.NDArray[np.float32]] | npt.NDArray[np.float32] = []
+    rescaled_dequant_postactiv1 : List[npt.NDArray[np.float32]] | npt.NDArray[np.float32] = []
     batch_quant_conv1 : npt.NDArray[np.float32] | npt.NDArray[np.int32]
     for i in range(n_partitions):
         # output type is float32, there is no conflict as the results are convolution sumations and multiplication of 8 bit numbers
@@ -420,32 +432,41 @@ start_index : int = 0) -> Tuple[npt.NDArray[np.int32], npt.NDArray[np.float32]]:
         # Multiplication of an eager tensor by a numpy array will yield the same output dtype as of the eager tensor regardless of the numpy array dtype
         # On the other hand multiplying 2 np.arrays() will preserve the highest memory requirement
         # Use numpy() because the values the multiplication of np.array() with eager tensor will preserve tensor dtype.
-        pre_dequant_activ1 : npt.NDArray[np.float32] = (q_model_info.bias_scales[scales_key] * tf.nn.relu(tf.nn.bias_add(batch_quant_conv1, q_model_info.quantized_bias[scales_key])).numpy()).astype(np.float32)
-        dequant_activ1.append(q_model_info.output_scales[scales_key] * np.round(pre_dequant_activ1 / q_model_info.output_scales[scales_key]))
+        quant_postactiv1 : npt.NDArray[np.float32] | npt.NDArray[np.int32] = tf.nn.relu(tf.nn.bias_add(batch_quant_conv1, q_model_info.quantized_bias[scales_key])).numpy()
+        if model_1 is None and evaluation_mode == ModelEvaluationMode.multi_relu:
+            idx = q_model_info.layers_indexes.index(start_index - 1)
+            key = q_model_info.keys[idx]
+            for channel in range(quant_postactiv1.shape[-1]):
+                quant_postactiv1[:,:,:, channel][quant_postactiv1[:,:,:, channel] >= q_model_info.quantized_post_activ_max[key][channel]] = q_model_info.quantized_post_activ_max[key][channel]
+                quant_postactiv1[:,:,:, channel][quant_postactiv1[:,:,:, channel] <= q_model_info.quantized_post_activ_min[key][channel]] = q_model_info.quantized_post_activ_min[key][channel]
+        pre_dequant_postactiv1 : npt.NDArray[np.float32] = (q_model_info.bias_scales[scales_key] * quant_postactiv1).astype(np.float32)
+        rescaled_dequant_postactiv1.append(q_model_info.output_scales[scales_key] * np.round(pre_dequant_postactiv1 / q_model_info.output_scales[scales_key]))
 
-    dequant_activ1 = np.concatenate(dequant_activ1).astype(np.float32) # 703.12515 MBi after conversion, 88 bytes befores pointer because it is a list
+    rescaled_dequant_postactiv1 = np.concatenate(rescaled_dequant_postactiv1).astype(np.float32) # 703.12515 MBi after conversion, 88 bytes befores pointer because it is a list
     if quant_conv1:
         quant_conv1 = np.concatenate(quant_conv1).astype(np.int32) # 703.12515 MBi after conversion, 88 bytes before conversion. Important it must be int32 for flipping values later and avoiding rounding error when using float32
     
     # Accuracy
     match(evaluation_mode):
-        case ModelEvaluationMode._2_quantized:
-            test_loss, test_accuracy = model_2.evaluate(dequant_activ1, test_labels, verbose = 0)
+        case ModelEvaluationMode.m2_quantized:
+            test_loss, test_accuracy = model_2.evaluate(rescaled_dequant_postactiv1, test_labels, verbose = 0)
         case ModelEvaluationMode.no_input_saturation:
-            test_loss, test_accuracy = model_partial_evaluate(model_2, layer_index_start = start_index, data_input = dequant_activ1, test_labels = test_labels)
+            test_loss, test_accuracy = model_partial_evaluate(model_2, layer_index_start = start_index, data_input = rescaled_dequant_postactiv1, test_labels = test_labels)
         case ModelEvaluationMode.manual_saturation:
             idx = q_model_info.layers_indexes.index(start_index - 1)
             key = q_model_info.keys[idx]
-            dequant_activ1[dequant_activ1 >= q_model_info.quantized_output_max[key]] = q_model_info.quantized_output_max[key]
-            dequant_activ1[dequant_activ1 <= q_model_info.quantized_output_min[key]] = q_model_info.quantized_output_min[key]
-            test_loss, test_accuracy = model_partial_evaluate(model_2, layer_index_start = start_index, data_input = dequant_activ1, test_labels = test_labels)
+            rescaled_dequant_postactiv1[rescaled_dequant_postactiv1 >= q_model_info.dequantized_output_max[key]] = q_model_info.dequantized_output_max[key]
+            rescaled_dequant_postactiv1[rescaled_dequant_postactiv1 <= q_model_info.dequantized_output_min[key]] = q_model_info.dequantized_output_min[key]
+            test_loss, test_accuracy = model_partial_evaluate(model_2, layer_index_start = start_index, data_input = rescaled_dequant_postactiv1, test_labels = test_labels)
+        case ModelEvaluationMode.multi_relu:
+            test_loss, test_accuracy = model_partial_evaluate(model_2, layer_index_start = start_index, data_input = rescaled_dequant_postactiv1, test_labels = test_labels)
         case _:
-            test_loss, test_accuracy = model_2.evaluate(dequant_activ1, test_labels, verbose = 0)
+            test_loss, test_accuracy = model_2.evaluate(rescaled_dequant_postactiv1, test_labels, verbose = 0)
 
     # Garbage collection
     del batch_quant_conv1 # 351.5626 MBi Numpy array
-    del pre_dequant_activ1 # 351.5626 MBi Numpy array
-    del dequant_activ1 # 703.125 MBi Numpy array
+    del pre_dequant_postactiv1 # 351.5626 MBi Numpy array
+    del rescaled_dequant_postactiv1 # 703.125 MBi Numpy array
     garbage_collection()
 
     return quant_conv1, test_loss, test_accuracy

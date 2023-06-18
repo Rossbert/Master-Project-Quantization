@@ -1,13 +1,29 @@
 # Bienvenido to my first readme file
 
-Some description.
-Some modification!
-Second mofication.
+Main file to test:
+* QSplit.py
 
-This modification is for the second branch.
+Packages needed:
+* Quantization.py
 
-Completely new files added test of quantization.
+Models needed:
+./model/model_q_aware_final_01
 
-Modification done in Github.
+Test to affect convolution operation on first layer. 
 
-I added a Jupyter Notebook for future training testing.
+* All the 10000 outputs on the test set will be affected
+* The output channels are generated randomly
+* The positions are also generated randomly
+* The program iterates through all the bit positions for each 32-bit convolution result.
+
+Parameters to be tuned:
+- Number of simulations = repetitions.
+- Limit of number of flips in total.
+- Bit step that will be flipped in the 32 bit element.
+- Operation mode.
+
+Select the operation mode:
+* 0 = 2nd part quantized: The second part will operate with an input quantizing layer with floating point weights.
+* 1 = 2nd part no input quantized: the second part will operate with floating point weights without an input quantizing layer.
+* 2 = 2nd part manual saturation: the second part will operate with floating point weights but their values are previously manually saturated.
+* 3 = 2nd part multichannel relu: applying an integer manual multichannel relu activation function.
