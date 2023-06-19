@@ -72,8 +72,8 @@ class QuantizedModelInfo():
         self.output_min : OrderedDict[str, float] = OrderedDict()
         self.dequantized_output_max : OrderedDict[str, float] = OrderedDict()
         self.dequantized_output_min : OrderedDict[str, float] = OrderedDict()
-        self.quantized_post_activ_max : OrderedDict[str, int] = OrderedDict()
-        self.quantized_post_activ_min : OrderedDict[str, int] = OrderedDict()
+        self.quantized_post_activ_max : OrderedDict[str, npt.NDArray[np.int32]] = OrderedDict()
+        self.quantized_post_activ_min : OrderedDict[str, npt.NDArray[np.int32]] = OrderedDict()
         self.input_zeros : OrderedDict[str, int] = OrderedDict()
         self.output_zeros : OrderedDict[str, int] = OrderedDict()
         self.kernel_max_vars : OrderedDict[str, npt.NDArray[np.float32]] = OrderedDict()
@@ -350,7 +350,7 @@ def recover_file_index(file_exists_flag: bool, save_data_path : str, file_delimi
                     last_index += file.read(1)
                 if last_index == '':
                     last_index = '0'
-                print("Last", last_index)
+                print(f"Last index read: {last_index}")
             else:
                 file.seek(0, os.SEEK_SET)
                 last_index = '-1'

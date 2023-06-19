@@ -25,7 +25,7 @@ Parameters to be tuned:
     * 2 = 2nd part manual saturation: the second part will operate with floating point weights but their values are previously manually saturated.
     * 3 = 2nd part multichannel relu: applying an integer manual multichannel relu activation function.
 """
-N_SIMULATIONS = 20                                      # Number of repetitions of everything
+N_SIMULATIONS = 5                                       # Number of repetitions of everything
 N_FLIPS_LIMIT = 4                                       # Maximum total number of flips per simulation
 BIT_STEPS_PROB = 1                                      # Divisor of 32, from 1 to 32
 
