@@ -80,7 +80,7 @@ _ , _ , _ , output_shapes = Quantization.get_layers_shapes(q_aware_model, T_VARI
 semi_quantized_test_images = np.round(test_images[:,:,:,np.newaxis]/output_scales[new_keys_list[0]]).astype(int)
 
 # Generating the split models
-model_pt1_nq, model_pt2_q = Quantization.mix_split_models_generator(q_aware_model, quantized_weights, new_keys_list)
+model_pt1_nq, model_pt2_q = Quantization.split_model_mixed(q_aware_model, quantized_weights, new_keys_list)
 
 # Generating the quantized convolution output for the test set, as the test set is unique so is the quantized output of the convolution
 INDEX_KEY_CONV1 = 1

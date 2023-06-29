@@ -20,8 +20,7 @@ Parameters to be tuned:
 - Limit of number of flips in total.
 - Bit step that will be flipped in the 32 bit element.
 - Operation mode:
-    * 0 = 2nd part quantized: The second part will operate with an input-quantizing-layer with floating point weights.
-    * 1 = 2nd part no input quantized: the second part will operate with floating point weights without an input-quantizing-layer.
+    * 1 = 2nd part no input saturation: the second part will operate with floating point weights without an input-quantizing-layer.
     * 2 = 2nd part manual saturation: the second part will operate with floating point weights but their values are previously manually saturated.
     * 3 = 2nd part multichannel relu: applying an integer manual multichannel relu activation function.
 """
@@ -29,16 +28,14 @@ N_SIMULATIONS = 5                                       # Number of repetitions 
 N_FLIPS_LIMIT = 4                                       # Maximum total number of flips per simulation
 BIT_STEPS_PROB = 1                                      # Divisor of 32, from 1 to 32
 
-OPERATION_MODE = 3                                      # Modification of operation mode
-
+OPERATION_MODE = 2                                      # Modification of operation mode
 # Quantification constants
 BIAS_BIT_WIDTH = 32
 # Number of partitions for batch analysis
 N_PARTITIONS = 2
-# Convolutional key
-INDEX_KEY_CONV1 = 1
 # First index of q_aware_model
 SPLIT_INDEX = 3
+FIRST_QUANTIZED = True
 
 OUTPUTS_DIR = "./outputs/"
 LOAD_PATH_Q_AWARE = "./model/model_q_aware_final_01"
@@ -63,33 +60,28 @@ print(f"Q Aware model test accuracy : {q_aware_test_acc:.2%}")
 print(f"Q Aware model test loss: {q_aware_test_loss:.6f}")
 
 q_model_info = Quantization.QuantizedModelInfo(q_aware_model)
+idx_conv = q_model_info.layers_indexes.index(SPLIT_INDEX - 1)
+key_conv = q_model_info.keys[idx_conv]
 
 # Preparing the quantized test set
 quantized_test_images = np.round(test_images[:,:,:,np.newaxis]/q_model_info.output_scales[q_model_info.keys[0]]).astype(int)
 
 # Generating the split models
-m1_nonquant, m2_quant = Quantization.mix_split_models_generator(q_aware_model, q_model_info, start_index = SPLIT_INDEX)
+model_1, model_2 = Quantization.split_model_mixed(q_aware_model, q_model_info, start_index = SPLIT_INDEX, first_quantized = FIRST_QUANTIZED)
 
 # Generating the quantized convolution output for the test set, as the test set is unique so is the quantized output of the convolution
-KEY_CONV1 = q_model_info.keys[INDEX_KEY_CONV1]
-SET_SIZE = test_labels.shape[0]
 
-if operation_mode == Quantization.ModelEvaluationMode.m2_quantized:
-    model_2 = m2_quant
-else:
-    model_2 = q_aware_model
-
-quant_conv1, test_loss, test_accuracy = Quantization.prediction_by_batches(
-    data_input = quantized_test_images,
-    test_labels = test_labels,
-    n_partitions = N_PARTITIONS,
-    q_model_info = q_model_info,
-    scales_key = KEY_CONV1,
-    model_1 = m1_nonquant,
-    model_2 = model_2,
-    evaluation_mode = operation_mode,
-    start_index = SPLIT_INDEX
-    )
+if FIRST_QUANTIZED:
+    quant_conv, test_loss, test_accuracy = Quantization.prediction_by_batches(
+        data_input = quantized_test_images,
+        test_labels = test_labels,
+        n_partitions = N_PARTITIONS,
+        q_model_info = q_model_info,
+        model_1 = model_1,
+        model_2 = model_2,
+        evaluation_mode = operation_mode,
+        start_index = SPLIT_INDEX
+        )
 
 print(f"Model test accuracy: {test_accuracy:.2%}")
 print(f"Model test loss: {test_loss:.6f}\n")
@@ -98,7 +90,7 @@ print(f"Model test loss: {test_loss:.6f}\n")
 del train_images # 358.8868 MBi
 del test_images # 59.8145 MBi
 del quantized_test_images # 29.9073 MBi
-del m1_nonquant # 48 bytes
+del model_1 # 48 bytes
 Quantization.garbage_collection()
 
 total_time = time.time()
@@ -145,6 +137,7 @@ with open(SAVE_DATA_PATH, 'a', newline = '') as main_file:
             None,
             test_loss,
         ])
+        main_file.flush()
         file_idx = 0
     else:
         file_idx = last_index + 1
@@ -156,29 +149,28 @@ with open(SAVE_DATA_PATH, 'a', newline = '') as main_file:
             for n_flips in range(1, N_FLIPS_LIMIT + 1):
                 iteration_time = time.time()
                 # Runs simulation for all images on the set
-                quant_conv1_copy = np.copy(quant_conv1)
-                for element_set in range(SET_SIZE):
+                quant_conv_copy = np.copy(quant_conv)
+                for element_set in range(test_labels.shape[0]):
                     for k in range(n_flips):
                         
                         # Convolutional layer random position
-                        kernel_row = np.random.randint(0, q_model_info.output_shapes[KEY_CONV1][1])
-                        kernel_column = np.random.randint(0, q_model_info.output_shapes[KEY_CONV1][2])
-                        channel_output = np.random.randint(0, q_model_info.output_shapes[KEY_CONV1][3])
+                        kernel_row = np.random.randint(0, q_model_info.output_shapes[key_conv][1])
+                        kernel_column = np.random.randint(0, q_model_info.output_shapes[key_conv][2])
+                        channel_output = np.random.randint(0, q_model_info.output_shapes[key_conv][3])
                         position = (element_set, kernel_row, kernel_column, channel_output)
                         kernel_position = (element_set, slice(None), slice(None), channel_output)
                         
                         # Flipped values calculation
-                        flipped_int = Quantization.n_bit_flipper(int(quant_conv1_copy[position]), BIAS_BIT_WIDTH, bit_position)
+                        flipped_int = Quantization.n_bit_flipper(int(quant_conv_copy[position]), BIAS_BIT_WIDTH, bit_position)
                         
                         # New int update value
-                        quant_conv1_copy[position] = flipped_int
+                        quant_conv_copy[position] = flipped_int
                 
                 _ , new_test_loss, new_test_accuracy = Quantization.prediction_by_batches(
-                    data_input = quant_conv1_copy,
+                    data_input = quant_conv_copy,
                     test_labels = test_labels,
                     n_partitions = N_PARTITIONS,
                     q_model_info = q_model_info,
-                    scales_key = KEY_CONV1,
                     model_1 = None,
                     model_2 = model_2,
                     evaluation_mode = operation_mode,
@@ -189,14 +181,14 @@ with open(SAVE_DATA_PATH, 'a', newline = '') as main_file:
                 print(f"Disturbed model test loss: {new_test_loss:.6f}")
 
                 # Deletion of unsused memory
-                del quant_conv1_copy # 703.12515 MBi
+                del quant_conv_copy # 703.12515 MBi
                 Quantization.garbage_collection()
 
                 main_writer.writerow([
                     file_idx,
                     f"{datetime.datetime.now().strftime('%Y/%m/%d %H:%M:%S')}",
-                    KEY_CONV1,
-                    INDEX_KEY_CONV1,
+                    key_conv,
+                    idx_conv,
                     n_flips,
                     bit_position,
                     new_test_accuracy,
@@ -207,6 +199,6 @@ with open(SAVE_DATA_PATH, 'a', newline = '') as main_file:
                 file_idx += 1
                 print(f"Sim={simulation_number} Model={file_idx} flips={n_flips} bit-pos={bit_position} iter-time={datetime.timedelta(seconds = time.time() - iteration_time)}\n")
 
-        print(f"Simulation={simulation_number} layer={KEY_CONV1} sim-time={datetime.timedelta(seconds = time.time() - simulation_time)}\n")
+        print(f"Simulation={simulation_number} layer={key_conv} sim-time={datetime.timedelta(seconds = time.time() - simulation_time)}\n")
 
 print(f"Finished total-time={datetime.timedelta(seconds = time.time() - total_time)}\n")

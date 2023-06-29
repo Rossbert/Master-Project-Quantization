@@ -3,10 +3,11 @@ import tensorflow_model_optimization as tfmot
 from keras.engine.functional import Functional
 import numpy as np
 import numpy.typing as npt
-from typing import Tuple, List
+from typing import Tuple, List, Dict, Any
 from collections import OrderedDict
 import os
 import gc
+import copy
 from enum import Enum
 
 class ModelEvaluationMode(Enum):
@@ -211,7 +212,7 @@ def check_differences(out_model_1 : np.ndarray, out_model_2 : np.ndarray) -> Non
     loc_false = np.where(diff == False)
     print(loc_false)
 
-# Log and other relevant functions
+# Relevant functions
 def garbage_collection():
     """ Manual garbage collection
     - Absolute necessary to free RAM during execution
@@ -256,57 +257,168 @@ def evaluate_model(interpreter: tf.lite.Interpreter, test_images : np.ndarray, t
     accuracy = (prediction_digits == test_labels).mean()
     return loss, accuracy
 
-def mix_split_models_generator(q_aware_model : Functional | tf.keras.Model, q_model_info : QuantizedModelInfo, start_index : int = 3) -> Tuple[tf.keras.Model, tf.keras.Model]:
-    """ Mixed model generation
-    -
-    Generates first model as non quantized and second model as quantized.
-    - First non quantized model with quantized weights
-    - Second quantized model with dequantized weights
+def unwrapp_layers(layers_list : List[Dict[str, int | str | Dict | List]]) -> List[Dict[str, int | str | Dict | List]]:
+    """ Unwrapps a quantized model
+    - Receives a list of layers
     """
-    INDEX_FIRST_LAYER_KEY_LIST = 1
-    INDEX_FIRST_CONV_ORIGINAL_MODEL = 2
-    INDEX_FIRST_CONV_PT1_MODEL = 1
-    INDEX_QUANTIZE_LAYER_PT2_MODEL = 1
-    PT2_LENGTH = len(q_aware_model.layers) - 3
+    quantize_index : None | int = None
+    layers_list = copy.deepcopy(layers_list)
 
-    input_layer = tf.keras.layers.Input(shape = (28, 28, 1))
-    conv_1 = tf.keras.layers.Conv2D(32, 5, use_bias = False, activation = None)(input_layer)
+    for i, layer_config in enumerate(layers_list):
+        if 'QuantizeLayer' in layer_config['class_name']:
+            quantize_index = i
+        if 'QuantizeWrapper' in layer_config['class_name']:
+            layer_config['class_name'] = layer_config['config']['layer']['class_name']
+            layer_config['name'] = layer_config['config']['layer']['config']['name']
+            layer_config['config'] = layer_config['config']['layer']['config']
+            if i >= 1:
+                layer_config['inbound_nodes'][0][0][0] = layers_list[i - 1]['name']
+            else:
+                layer_config['inbound_nodes'] = []
+            if 'Conv' in layer_config['class_name'] or 'Dense' in layer_config['class_name']:
+                layer_config['config']['activation'] = layer_config['config']['activation']['config']['activation']
 
-    input_layer_2 = tf.keras.layers.Input(shape = (24, 24, 32))
-    pool_1 = tf.keras.layers.MaxPool2D(pool_size = 2, strides = 2)(input_layer_2)
-    conv_2 = tf.keras.layers.Conv2D(64, 5, use_bias = True, activation = 'relu')(pool_1)
-    pool_2 = tf.keras.layers.MaxPool2D(pool_size = 2, strides = 2)(conv_2)
-    conv_3 = tf.keras.layers.Conv2D(96, 3, use_bias = True, activation = 'relu')(pool_2)
-    pool_3 = tf.keras.layers.MaxPool2D(pool_size = 2, strides = 2)(conv_3)
-    flat_1 = tf.keras.layers.Flatten()(pool_3)
-    dense_out = tf.keras.layers.Dense(10, activation = 'softmax', name = "dense_last")(flat_1)
-
-    # First model: non-quantized with quantized weights
-    nq_model_part1 = tf.keras.models.Model(inputs = input_layer, outputs = conv_1)
-    # Second model: quantized
-    nq_model_part2 = tf.keras.models.Model(inputs = input_layer_2, outputs = dense_out)
-    q_model_part2 = tfmot.quantization.keras.quantize_model(nq_model_part2)
-
-    # Assignation of values for the part 1 model
-    key = q_model_info.keys[INDEX_FIRST_LAYER_KEY_LIST]
-    nq_model_part1.layers[INDEX_FIRST_CONV_PT1_MODEL].set_weights([q_model_info.quantized_weights[key]])
+    if quantize_index is not None and quantize_index < len(layers_list) - 1:
+        layers_list[quantize_index + 1]['inbound_nodes'][0][0][0] = layers_list[quantize_index - 1]['name']
+        del layers_list[quantize_index]
     
-    # Assignation of max and min values for quantization layer for part 2 model
-    indexes_original_part2 = list(range(start_index, start_index + PT2_LENGTH))
-    indexes_new_part2 = list(range(start_index - 1, start_index - 1 + PT2_LENGTH))
-    quantize_layer_max_min = q_aware_model.layers[INDEX_FIRST_CONV_ORIGINAL_MODEL].get_weights()[-2:]
-    quantize_layer_max_min.append(-1)
-    q_model_part2.layers[INDEX_QUANTIZE_LAYER_PT2_MODEL].set_weights(quantize_layer_max_min)
-    # Assignation of the rest of the values for the rest of the part 2 model
-    weights_part2_model = [q_aware_model.layers[idx].get_weights() for idx in indexes_original_part2]
-    for i, idx in enumerate(indexes_new_part2):
-        q_model_part2.layers[idx].set_weights(weights_part2_model[i])
+    return layers_list
 
-    q_model_part2.compile(optimizer = 'adam', 
+def split_model(model : Functional | tf.keras.Model, start_index : int = 3) -> Tuple[tf.keras.Model, tf.keras.Model]:
+    """ Divides the model in 2 at the selected index
+    """
+    configuration : Dict[str, str | bool | List] = model.get_config()
+    layers_part_1 : List[Dict[str, int | str | Dict | List]] = copy.deepcopy(configuration['layers'][0: start_index])
+    layers_part_2 : List[Dict[str, int | str | Dict | List]] = copy.deepcopy(configuration['layers'][start_index:])
+
+    m1_configuration = {
+        'name' : 'model_part_1',
+        'trainable' : True,
+        'layers' : layers_part_1,
+        'input_layers' : [[layers_part_1[0]['name'], 0, 0]],
+        'output_layers' : [[layers_part_1[-1]['name'], 0, 0]],
+    }
+
+    with tfmot.quantization.keras.quantize_scope():
+        # m1 = tf.keras.models.model_from_config(configuration)
+        m1 : Functional | tf.keras.Sequential = tf.keras.models.Model.from_config(m1_configuration)
+    
+    # Add input layer to the second model
+    input_config = copy.deepcopy(layers_part_1[0])
+    input_config['config']['batch_input_shape'] = m1.output_shape 
+    layers_part_2[0]['inbound_nodes'][0][0][0] = input_config['name']
+    layers_part_2.insert(0, input_config)
+
+    m2_configuration = {
+        'name' : 'model_part_2',
+        'trainable' : True,
+        'layers' : layers_part_2,
+        'input_layers' : [[layers_part_2[0]['name'], 0, 0]],
+        'output_layers' : [[layers_part_2[-1]['name'], 0, 0]],
+    }
+
+    with tfmot.quantization.keras.quantize_scope():
+        m2 : Functional | tf.keras.Sequential = tf.keras.models.Model.from_config(m2_configuration)
+
+    weights = [model.layers[idx].get_weights() for idx in range(len(model.layers))]
+
+    for idx in range(len(m1.layers)):
+        m1.layers[idx].set_weights(weights[idx])
+
+    for i, idx in enumerate(range(start_index, len(model.layers))):
+        m2.layers[i + 1].set_weights(weights[idx])
+
+    return m1, m2
+
+def split_model_mixed(q_aware_model : Functional | tf.keras.Model, q_model_info : QuantizedModelInfo, start_index : int = 3, first_quantized : bool = False) -> Tuple[tf.keras.Model, tf.keras.Model]:
+    """ Divides the model in 2
+    - First part either quantized or non-quantized
+    - Second part quantized model with dequantized weights
+    - Assumes selected index is always the next index of a convolutional layer
+    """
+    configuration : Dict[str, str | bool | List] = q_aware_model.get_config()
+    layers_part_1 : List[Dict[str, int | str | Dict | List]] = copy.deepcopy(configuration['layers'][0: start_index])
+    layers_part_2 : List[Dict[str, int | str | Dict | List]] = copy.deepcopy(configuration['layers'][start_index:])
+
+    if first_quantized:
+        layers_part_1 = unwrapp_layers(layers_part_1)
+        layers_part_1[-1]['config']['activation'] = 'linear'
+        layers_part_1[-1]['config']['use_bias'] = False
+    else:
+        layers_part_1[-1]['config']['layer']['config']['activation']['config']['activation'] = 'linear'
+        layers_part_1[-1]['config']['layer']['config']['use_bias'] = False
+
+    m1_configuration = {
+        'name' : 'model_part_1',
+        'trainable' : True,
+        'layers' : layers_part_1,
+        'input_layers' : [[layers_part_1[0]['name'], 0, 0]],
+        'output_layers' : [[layers_part_1[-1]['name'], 0, 0]],
+    }
+
+    with tfmot.quantization.keras.quantize_scope():
+        # m1 = tf.keras.models.model_from_config(configuration)
+        m1 : Functional | tf.keras.Sequential = tf.keras.models.Model.from_config(m1_configuration)
+    
+    # Add input layer to the second model
+    input_config = copy.deepcopy(layers_part_1[0])
+    input_config['config']['batch_input_shape'] = m1.output_shape 
+    layers_part_2[0]['inbound_nodes'][0][0][0] = input_config['name']
+    layers_part_2.insert(0, input_config)
+
+    m2_configuration = {
+        'name' : 'model_part_2',
+        'trainable' : True,
+        'layers' : layers_part_2,
+        'input_layers' : [[layers_part_2[0]['name'], 0, 0]],
+        'output_layers' : [[layers_part_2[-1]['name'], 0, 0]],
+    }
+
+    with tfmot.quantization.keras.quantize_scope():
+        m2 : Functional | tf.keras.Sequential = tf.keras.models.Model.from_config(m2_configuration)
+
+    weights = [q_aware_model.layers[idx].get_weights() for idx in range(len(q_aware_model.layers))]
+
+    new_weights = copy.deepcopy(weights[:start_index])
+
+    if first_quantized:
+        i = 0
+        idx = 0
+        for j in range(len(new_weights)):
+            idx = q_model_info.layers_indexes[i]
+            key = q_model_info.keys[i]
+            if j == idx:
+                if 'quantize_layer' not in key:
+                    if idx < start_index - 1:
+                        new_weights[j] = [q_model_info.quantized_weights[key], q_model_info.quantized_bias[key]]
+                    else:
+                        new_weights[j] = [q_model_info.quantized_weights[key]]
+                i += 1
+            else:
+                new_weights[j] = []
+
+        i = 0
+        quantize_index : int | None = None
+        while quantize_index is None and i < len(configuration['layers']):
+            if 'QuantizeLayer' in configuration['layers'][i]['class_name']:
+                quantize_index = i
+            i += 1
+        del new_weights[quantize_index]
+    else:
+        # Position occupied by the bias values
+        del new_weights[-1][1]
+
+    for idx in range(len(m1.layers)):
+        m1.layers[idx].set_weights(new_weights[idx])
+
+    for i, idx in enumerate(range(start_index, len(q_aware_model.layers))):
+        m2.layers[i + 1].set_weights(weights[idx])
+
+    m2.compile(optimizer = 'adam', 
         loss = 'sparse_categorical_crossentropy', 
         metrics = ['accuracy'])
 
-    return nq_model_part1, q_model_part2
+    return m1, m2
 
 def n_bit_flipper(value : int, bit_width: int, bit_pos : int) -> int:
     """ Bit flipper n-bit length
@@ -359,7 +471,7 @@ def recover_file_index(file_exists_flag: bool, save_data_path : str, file_delimi
         last_index = 0
     return int(last_index)
 
-def model_partial_predict(q_aware_model: Functional | tf.keras.Model, data_input: npt.NDArray[np.float32], layer_index_start: int) -> npt.NDArray[np.float32]:
+def model_end_predict(q_aware_model: Functional | tf.keras.Model, data_input: npt.NDArray[np.float32], layer_index_start: int) -> npt.NDArray[np.float32]:
     """ Predicts one output from a keras model assuming the prediction starts from a given layer
     - It is assumed that the shapes coincide
     - Need to add assertion of shape compatibility in the future
@@ -373,6 +485,19 @@ def model_partial_predict(q_aware_model: Functional | tf.keras.Model, data_input
 
     return partial_output.numpy()
 
+def model_begin_predict(model: Functional | tf.keras.Model, data_input: npt.NDArray[np.float32], layer_index_stop: int) -> npt.NDArray[np.float32]:
+    """ Predicts one output from a keras model assuming the prediction stops at a given layer
+    - It is assumed that the shapes coincide
+    - Need to add assertion of shape compatibility in the future
+    """
+    for i in range(layer_index_stop):
+        if i == 0:
+            partial_output : npt.NDArray[np.float32] = model.layers[i](data_input)
+        else:
+            partial_output = model.layers[i](partial_output)
+    garbage_collection()
+    return partial_output.numpy()
+
 def model_partial_evaluate(q_aware_model: Functional | tf.keras.Model, layer_index_start: int, data_input : np.ndarray, test_labels : npt.NDArray[np.uint8]) -> Tuple[float, float]:
     """ Evaluate Keras Model from partial input manually:
     - Receives a keras model and returns a tuple of loss and accuracy.
@@ -381,7 +506,7 @@ def model_partial_evaluate(q_aware_model: Functional | tf.keras.Model, layer_ind
     prediction_digits = []
     predictions = []
     
-    output = model_partial_predict(q_aware_model, data_input, layer_index_start)
+    output = model_end_predict(q_aware_model, data_input, layer_index_start)
 
     # entropy = []
     for i, out in enumerate(output):
@@ -405,71 +530,74 @@ def prediction_by_batches(data_input : npt.NDArray[np.int32],
 test_labels : npt.NDArray[np.uint8],
 n_partitions : int, 
 q_model_info : QuantizedModelInfo,
-scales_key : str, 
 model_1 : tf.keras.Model | None = None,
 model_2 : tf.keras.Model | None = None,
-evaluation_mode : ModelEvaluationMode = ModelEvaluationMode.m2_quantized,
+evaluation_mode : ModelEvaluationMode = ModelEvaluationMode.manual_saturation,
 start_index : int = 3) -> Tuple[npt.NDArray[np.int32], npt.NDArray[np.float32]]:
     """ Evaluates the model and deletes memory unused
     """
     # Batch analysis for testing and avoid memory head overload
-    # model.predict(), tf.nn.bias_add(), tf.nn.relu(), and all eager tensor operations may exceed memory allocation
     BATCH_SIZE = test_labels.shape[0]//n_partitions
-    # Calculation of the dequantized output of part 1
+    idx = q_model_info.layers_indexes.index(start_index - 1)
+    key = q_model_info.keys[idx]
     # Must be done in batches
-    quant_conv1 : List[npt.NDArray[np.float32]] | npt.NDArray[np.int32] = []
-    rescaled_dequant_postactiv1 : List[npt.NDArray[np.float32]] | npt.NDArray[np.float32] = []
-    batch_quant_conv1 : npt.NDArray[np.float32] | npt.NDArray[np.int32]
+    # model.predict(), tf.nn.bias_add(), tf.nn.relu(), and all eager tensor operations may exceed memory allocation
+    quant_conv : List[npt.NDArray[np.float32]] | npt.NDArray[np.int32] = []
+    quant_postactiv : List[npt.NDArray[np.int32]] | npt.NDArray[np.int32] = []
     for i in range(n_partitions):
-        # output type is float32, there is no conflict as the results are convolution sumations and multiplication of 8 bit numbers
+        # Output type of .predict() method is float32, there is no conflict as the results are convolution sumations and multiplication of 8 bit numbers
         # No rounding problem as the maximum int value is as big as 18 bits
         # Bigger values than 24 bits will produce rounding error when using tf.float32 number values
         if model_1 is not None:
-            batch_quant_conv1 = model_1.predict(data_input[i*BATCH_SIZE: (i + 1)*BATCH_SIZE]) # np.float32
-            quant_conv1.append(batch_quant_conv1)
+            batch_quant_conv : npt.NDArray[np.float32] = model_1.predict(data_input[i*BATCH_SIZE: (i + 1)*BATCH_SIZE]) # np.float32
+            quant_conv.append(batch_quant_conv)
         else:
-            batch_quant_conv1 = data_input[i*BATCH_SIZE:(i + 1)*BATCH_SIZE]
+            batch_quant_conv : npt.NDArray[np.int32] = data_input[i*BATCH_SIZE: (i + 1)*BATCH_SIZE]
         # Multiplication of an eager tensor by a numpy array will yield the same output dtype as of the eager tensor regardless of the numpy array dtype
         # On the other hand multiplying 2 np.arrays() will preserve the highest memory requirement
-        # Use numpy() because the values the multiplication of np.array() with eager tensor will preserve tensor dtype.
-        quant_postactiv1 : npt.NDArray[np.float32] | npt.NDArray[np.int32] = tf.nn.relu(tf.nn.bias_add(batch_quant_conv1, q_model_info.quantized_bias[scales_key])).numpy()
+        # Use .numpy() method to convert tensor to numpy array because the multiplication preserves highest dtype.
+        batch_quant_postactiv : npt.NDArray[np.int32] = tf.nn.relu(tf.nn.bias_add(batch_quant_conv, q_model_info.quantized_bias[key])).numpy().astype(int)
         if model_1 is None and evaluation_mode == ModelEvaluationMode.multi_relu:
-            idx = q_model_info.layers_indexes.index(start_index - 1)
-            key = q_model_info.keys[idx]
-            for channel in range(quant_postactiv1.shape[-1]):
-                quant_postactiv1[:,:,:, channel][quant_postactiv1[:,:,:, channel] >= q_model_info.quantized_post_activ_max[key][channel]] = q_model_info.quantized_post_activ_max[key][channel]
-                quant_postactiv1[:,:,:, channel][quant_postactiv1[:,:,:, channel] <= q_model_info.quantized_post_activ_min[key][channel]] = q_model_info.quantized_post_activ_min[key][channel]
-        pre_dequant_postactiv1 : npt.NDArray[np.float32] = (q_model_info.bias_scales[scales_key] * quant_postactiv1).astype(np.float32)
-        rescaled_dequant_postactiv1.append(q_model_info.output_scales[scales_key] * np.round(pre_dequant_postactiv1 / q_model_info.output_scales[scales_key]))
-
-    rescaled_dequant_postactiv1 = np.concatenate(rescaled_dequant_postactiv1).astype(np.float32) # 703.12515 MBi after conversion, 88 bytes befores pointer because it is a list
-    if quant_conv1:
-        quant_conv1 = np.concatenate(quant_conv1).astype(np.int32) # 703.12515 MBi after conversion, 88 bytes before conversion. Important it must be int32 for flipping values later and avoiding rounding error when using float32
-    
-    # Accuracy
-    match(evaluation_mode):
-        case ModelEvaluationMode.m2_quantized:
-            test_loss, test_accuracy = model_2.evaluate(rescaled_dequant_postactiv1, test_labels, verbose = 0)
-        case ModelEvaluationMode.no_input_saturation:
-            test_loss, test_accuracy = model_partial_evaluate(model_2, layer_index_start = start_index, data_input = rescaled_dequant_postactiv1, test_labels = test_labels)
-        case ModelEvaluationMode.manual_saturation:
-            idx = q_model_info.layers_indexes.index(start_index - 1)
-            key = q_model_info.keys[idx]
-            rescaled_dequant_postactiv1[rescaled_dequant_postactiv1 >= q_model_info.dequantized_output_max[key]] = q_model_info.dequantized_output_max[key]
-            rescaled_dequant_postactiv1[rescaled_dequant_postactiv1 <= q_model_info.dequantized_output_min[key]] = q_model_info.dequantized_output_min[key]
-            test_loss, test_accuracy = model_partial_evaluate(model_2, layer_index_start = start_index, data_input = rescaled_dequant_postactiv1, test_labels = test_labels)
-        case ModelEvaluationMode.multi_relu:
-            test_loss, test_accuracy = model_partial_evaluate(model_2, layer_index_start = start_index, data_input = rescaled_dequant_postactiv1, test_labels = test_labels)
-        case _:
-            test_loss, test_accuracy = model_2.evaluate(rescaled_dequant_postactiv1, test_labels, verbose = 0)
+            for channel in range(batch_quant_postactiv.shape[-1]):
+                batch_quant_postactiv[:,:,:, channel][batch_quant_postactiv[:,:,:, channel] >= q_model_info.quantized_post_activ_max[key][channel]] = q_model_info.quantized_post_activ_max[key][channel]
+                batch_quant_postactiv[:,:,:, channel][batch_quant_postactiv[:,:,:, channel] <= q_model_info.quantized_post_activ_min[key][channel]] = q_model_info.quantized_post_activ_min[key][channel]
+        quant_postactiv.append(batch_quant_postactiv)
 
     # Garbage collection
-    del batch_quant_conv1 # 351.5626 MBi Numpy array
-    del pre_dequant_postactiv1 # 351.5626 MBi Numpy array
-    del rescaled_dequant_postactiv1 # 703.125 MBi Numpy array
+    del batch_quant_conv # 351.5626 MBi Numpy array
+    del batch_quant_postactiv # 351.5626 MBi Numpy array
     garbage_collection()
 
-    return quant_conv1, test_loss, test_accuracy
+    if quant_conv:
+        quant_conv = np.concatenate(quant_conv).astype(np.int32) # 703.12515 MBi Numpy array. Important it must be int32 for flipping values later and avoiding rounding error when using float32
+    quant_postactiv = np.concatenate(quant_postactiv) # 703.125 MBi Numpy array
 
+    dequant_postactiv : npt.NDArray[np.float32] = (q_model_info.bias_scales[key] * quant_postactiv).astype(np.float32)
+    rescaled_postactiv = (q_model_info.output_scales[key] * np.round(dequant_postactiv / q_model_info.output_scales[key])).astype(np.float32)
+    
+    # Garbage collection
+    del quant_postactiv # 703.125 MBi Numpy array
+    del dequant_postactiv # 703.125 MBi Numpy array
+    garbage_collection()
 
+    # Identifying the case of the evaluation mode
+    match(evaluation_mode):
+        case ModelEvaluationMode.manual_saturation:
+            rescaled_postactiv[rescaled_postactiv >= q_model_info.dequantized_output_max[key]] = q_model_info.dequantized_output_max[key]
+            rescaled_postactiv[rescaled_postactiv <= q_model_info.dequantized_output_min[key]] = q_model_info.dequantized_output_min[key]
+        case ModelEvaluationMode.m2_quantized:
+            pass
+        case ModelEvaluationMode.no_input_saturation:
+            pass
+        case ModelEvaluationMode.multi_relu:
+            pass
+        case _:
+            pass
+    # test_loss, test_accuracy = model_partial_evaluate(model_2, layer_index_start = start_index, data_input = rescaled_postactiv, test_labels = test_labels)
+    test_loss, test_accuracy = model_2.evaluate(rescaled_postactiv, test_labels, verbose = 0)
 
+    # Garbage collection
+    del rescaled_postactiv # 703.125 MBi Numpy array
+    garbage_collection()
+
+    return quant_conv, test_loss, test_accuracy
