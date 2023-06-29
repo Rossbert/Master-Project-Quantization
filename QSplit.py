@@ -71,17 +71,16 @@ model_1, model_2 = Quantization.split_model_mixed(q_aware_model, q_model_info, s
 
 # Generating the quantized convolution output for the test set, as the test set is unique so is the quantized output of the convolution
 
-if FIRST_QUANTIZED:
-    quant_conv, test_loss, test_accuracy = Quantization.prediction_by_batches(
-        data_input = quantized_test_images,
-        test_labels = test_labels,
-        n_partitions = N_PARTITIONS,
-        q_model_info = q_model_info,
-        model_1 = model_1,
-        model_2 = model_2,
-        evaluation_mode = operation_mode,
-        start_index = SPLIT_INDEX
-        )
+quant_conv, test_loss, test_accuracy = Quantization.prediction_by_batches(
+    data_input = quantized_test_images,
+    test_labels = test_labels,
+    n_partitions = N_PARTITIONS,
+    q_model_info = q_model_info,
+    model_1 = model_1,
+    model_2 = model_2,
+    evaluation_mode = operation_mode,
+    start_index = SPLIT_INDEX
+    )
 
 print(f"Model test accuracy: {test_accuracy:.2%}")
 print(f"Model test loss: {test_loss:.6f}\n")
@@ -197,7 +196,7 @@ with open(SAVE_DATA_PATH, 'a', newline = '') as main_file:
                 ])
                 main_file.flush()
                 file_idx += 1
-                print(f"Sim={simulation_number} Model={file_idx} flips={n_flips} bit-pos={bit_position} iter-time={datetime.timedelta(seconds = time.time() - iteration_time)}\n")
+                print(f"Sim={simulation_number} Model={file_idx} flips={n_flips} bit-pos={bit_position} iter-time={datetime.timedelta(seconds = time.time() - iteration_time)} time-now={datetime.timedelta(seconds = time.time() - total_time)}\n")
 
         print(f"Simulation={simulation_number} layer={key_conv} sim-time={datetime.timedelta(seconds = time.time() - simulation_time)}\n")
 

@@ -332,14 +332,15 @@ def split_model(model : Functional | tf.keras.Model, start_index : int = 3) -> T
 
 def split_model_mixed(q_aware_model : Functional | tf.keras.Model, q_model_info : QuantizedModelInfo, start_index : int = 3, first_quantized : bool = False) -> Tuple[tf.keras.Model, tf.keras.Model]:
     """ Divides the model in 2
-    - First part either quantized or non-quantized
-    - Second part quantized model with dequantized weights
-    - Assumes selected index is always the next index of a convolutional layer
+    - First part model with either quantized or non-quantized weights
+    - Second part model with dequantized weights (floating point)
+    - Assumes selected start_index is always an index next to one of a convolutional layer index!
     """
     configuration : Dict[str, str | bool | List] = q_aware_model.get_config()
     layers_part_1 : List[Dict[str, int | str | Dict | List]] = copy.deepcopy(configuration['layers'][0: start_index])
     layers_part_2 : List[Dict[str, int | str | Dict | List]] = copy.deepcopy(configuration['layers'][start_index:])
 
+    # Modifies the configuration of the layers of the first part model
     if first_quantized:
         layers_part_1 = unwrapp_layers(layers_part_1)
         layers_part_1[-1]['config']['activation'] = 'linear'
@@ -360,7 +361,7 @@ def split_model_mixed(q_aware_model : Functional | tf.keras.Model, q_model_info 
         # m1 = tf.keras.models.model_from_config(configuration)
         m1 : Functional | tf.keras.Sequential = tf.keras.models.Model.from_config(m1_configuration)
     
-    # Add input layer to the second model
+    # Add input layer to the second part model
     input_config = copy.deepcopy(layers_part_1[0])
     input_config['config']['batch_input_shape'] = m1.output_shape 
     layers_part_2[0]['inbound_nodes'][0][0][0] = input_config['name']
@@ -377,8 +378,8 @@ def split_model_mixed(q_aware_model : Functional | tf.keras.Model, q_model_info 
     with tfmot.quantization.keras.quantize_scope():
         m2 : Functional | tf.keras.Sequential = tf.keras.models.Model.from_config(m2_configuration)
 
+    # Weights extraction
     weights = [q_aware_model.layers[idx].get_weights() for idx in range(len(q_aware_model.layers))]
-
     new_weights = copy.deepcopy(weights[:start_index])
 
     if first_quantized:
@@ -403,11 +404,13 @@ def split_model_mixed(q_aware_model : Functional | tf.keras.Model, q_model_info 
             if 'QuantizeLayer' in configuration['layers'][i]['class_name']:
                 quantize_index = i
             i += 1
+        # Position occupied by the input-quantizing-layer
         del new_weights[quantize_index]
     else:
         # Position occupied by the bias values
         del new_weights[-1][1]
 
+    # Weights assignation
     for idx in range(len(m1.layers)):
         m1.layers[idx].set_weights(new_weights[idx])
 
@@ -533,8 +536,14 @@ q_model_info : QuantizedModelInfo,
 model_1 : tf.keras.Model | None = None,
 model_2 : tf.keras.Model | None = None,
 evaluation_mode : ModelEvaluationMode = ModelEvaluationMode.manual_saturation,
-start_index : int = 3) -> Tuple[npt.NDArray[np.int32], npt.NDArray[np.float32]]:
-    """ Evaluates the model and deletes memory unused
+start_index : int = 3) -> Tuple[npt.NDArray[np.int32], float, float]:
+    """ Evaluates both parts of the model and deletes memory unused
+    - Different behaviour depending if you selected different evaluation_mode:
+        * manual_saturation : Implements a manual floating-point saturation to output of model 1 before evaluating the second model
+        * no_input_saturation : Feeds the output of model 1 directly to model 2
+        * multi_relu : Applies an integer manual saturation to the output of model 1 before feeding it to model 2
+        * m2_quantized : Not implemented 
+    - Manual garbage collection functions are called multiple times
     """
     # Batch analysis for testing and avoid memory head overload
     BATCH_SIZE = test_labels.shape[0]//n_partitions
@@ -585,11 +594,11 @@ start_index : int = 3) -> Tuple[npt.NDArray[np.int32], npt.NDArray[np.float32]]:
         case ModelEvaluationMode.manual_saturation:
             rescaled_postactiv[rescaled_postactiv >= q_model_info.dequantized_output_max[key]] = q_model_info.dequantized_output_max[key]
             rescaled_postactiv[rescaled_postactiv <= q_model_info.dequantized_output_min[key]] = q_model_info.dequantized_output_min[key]
-        case ModelEvaluationMode.m2_quantized:
-            pass
         case ModelEvaluationMode.no_input_saturation:
             pass
         case ModelEvaluationMode.multi_relu:
+            pass
+        case ModelEvaluationMode.m2_quantized:
             pass
         case _:
             pass
