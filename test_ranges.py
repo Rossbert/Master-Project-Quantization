@@ -88,7 +88,7 @@ model : tf.keras.Model | None = None) -> None:
     # rescaled_dequant_postactiv1 : List[npt.NDArray[np.float32]] | npt.NDArray[np.float32] = []
     for i in range(n_partitions):
         batch_quant_conv : npt.NDArray[np.float32] = model.predict(data_input[i*BATCH_SIZE: (i + 1)*BATCH_SIZE]) # np.float32
-        batch_quant_conv_bias : npt.NDArray[np.int32] = tf.nn.bias_add(batch_quant_conv, q_model_info.quantized_bias[key]).numpy().astype(int)
+        batch_quant_conv_bias : npt.NDArray[np.int32] = tf.nn.bias_add(batch_quant_conv, q_model_info.quantized_biases[key]).numpy().astype(int)
         batch_quant_postactiv : npt.NDArray[np.int32] = tf.nn.relu(batch_quant_conv_bias).numpy()
         
         quant_conv.append(batch_quant_conv)
@@ -173,7 +173,7 @@ model : tf.keras.Model | None = None) -> None:
     # rescaled_dequant_postactiv1 : List[npt.NDArray[np.float32]] | npt.NDArray[np.float32] = []
     for i in range(n_partitions):
         batch_quant_conv : npt.NDArray[np.float32] = model.predict(quantized_data_input[i*BATCH_SIZE: (i + 1)*BATCH_SIZE]) # np.float32
-        batch_quant_conv_bias : npt.NDArray[np.int32] = tf.nn.bias_add(batch_quant_conv, q_model_info.quantized_bias[key]).numpy().astype(int)
+        batch_quant_conv_bias : npt.NDArray[np.int32] = tf.nn.bias_add(batch_quant_conv, q_model_info.quantized_biases[key]).numpy().astype(int)
         batch_dequant_conv_bias : npt.NDArray[np.float32] = (q_model_info.bias_scales[key] * batch_quant_conv_bias).astype(np.float32)
         batch_quant_rescaled_conv_bias : npt.NDArray[np.int32] = np.round(batch_dequant_conv_bias / q_model_info.output_scales[key]).astype(np.int32)
         batch_quant_rescaled_postactiv : npt.NDArray[np.int32] = tf.nn.relu(batch_quant_rescaled_conv_bias).numpy()
@@ -268,7 +268,7 @@ model : tf.keras.Model | None = None) -> None:
     # rescaled_dequant_postactiv1 : List[npt.NDArray[np.float32]] | npt.NDArray[np.float32] = []
     for i in range(n_partitions):
         batch_quant_conv : npt.NDArray[np.float32] = model.predict(quantized_data_input[i*BATCH_SIZE: (i + 1)*BATCH_SIZE]) # np.float32
-        batch_quant_conv_bias : npt.NDArray[np.int32] = tf.nn.bias_add(batch_quant_conv, q_model_info.quantized_bias[key]).numpy().astype(int)
+        batch_quant_conv_bias : npt.NDArray[np.int32] = tf.nn.bias_add(batch_quant_conv, q_model_info.quantized_biases[key]).numpy().astype(int)
         batch_quant_postactiv : npt.NDArray[np.int32] = tf.nn.relu(batch_quant_conv_bias).numpy()
         
         quant_postactiv.append(batch_quant_postactiv)
@@ -308,21 +308,20 @@ model : tf.keras.Model | None = None) -> None:
     print(f"Manual activation rescaled float output min: {np.min(rescaled_postactiv)}")
     print(f"Q model float output max: {np.max(q_model_output)}")
     print(f"Q model float output min: {np.min(q_model_output)}")
-    print(f"Unique differences: {difference_values} and respective counts: {counts}")
+    print(f"Unique differences: {difference_values}\nAnd respective counts: {counts}")
     # Garbage collection
     del rescaled_postactiv # 703.12515 MBi Numpy array
     del q_model_output # 703.12515 MBi Numpy array
     del difference # 703.12515 MBi Numpy array
     Quantization.garbage_collection()
 
-OPERATION_MODE = 3                                      # Modification of operation mode
 # Number of partitions for batch analysis
 N_PARTITIONS = 2
 # First index of q_aware_model
 SPLIT_INDEX = 3
-FIRST_QUANTIZED = True
-
-LOAD_PATH_Q_AWARE = "./model/model_q_aware_final_01"
+SEPARATION_MODE = Quantization.SeparationMode(2)
+# LOAD_PATH_Q_AWARE = "./model/model_q_aware_final_01"
+LOAD_PATH_Q_AWARE = "./model/model_q_aware_ep5_2023-07-02_16-50-58"
 
 (train_images, train_labels), (test_images, test_labels) = tf.keras.datasets.fashion_mnist.load_data()
 train_images = train_images / 255.0
@@ -338,9 +337,9 @@ q_model_info = Quantization.QuantizedModelInfo(q_aware_model)
 quantized_test_images = np.round(test_images[:,:,:,np.newaxis]/q_model_info.output_scales[q_model_info.keys[0]]).astype(int)
 
 # Generating the split models
-m1, m2 = Quantization.split_model_mixed(q_aware_model, q_model_info, start_index = SPLIT_INDEX, first_quantized = FIRST_QUANTIZED)
+m1, m2 = Quantization.split_model_mixed(q_aware_model, q_model_info, start_index = SPLIT_INDEX, separation_mode = SEPARATION_MODE)
 
-if FIRST_QUANTIZED:
+if SEPARATION_MODE == Quantization.SeparationMode.first_quantized_weights:
     by_batches_quantized(
         data_input = quantized_test_images,
         test_labels = test_labels,
@@ -348,7 +347,7 @@ if FIRST_QUANTIZED:
         q_model_info = q_model_info,
         start_index = SPLIT_INDEX,
         model = m1,
-        )
+    )
     # by_batches_comparison(
     #     quantized_data_input = quantized_test_images,
     #     non_quantized_data_input = test_images[:,:,:,np.newaxis],
@@ -359,16 +358,6 @@ if FIRST_QUANTIZED:
     #     start_index = SPLIT_INDEX,
     #     model = m1,
     # )
-    by_batches_alternative_comparison(
-        quantized_data_input = quantized_test_images,
-        non_quantized_data_input = test_images[:,:,:,np.newaxis],
-        test_labels = test_labels,
-        n_partitions = N_PARTITIONS,
-        q_model_info = q_model_info,
-        q_aware_model = q_aware_model,
-        start_index = SPLIT_INDEX,
-        model = m1,
-    )
 else:
     by_batches_non_quantized(
         data_input = test_images[:,:,:,np.newaxis],

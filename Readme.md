@@ -1,4 +1,4 @@
-# Bienvenido to my first readme file
+# Quantization functions Readme.md
 
 Main file to test:
 * QSplit.py

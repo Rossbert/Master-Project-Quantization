@@ -2,7 +2,6 @@ import tensorflow as tf
 import tensorflow_model_optimization as tfmot
 from keras.engine.functional import Functional
 import numpy as np
-import numpy.typing as npt
 import Quantization
 
 OUTPUTS_DIR = "./outputs/"

@@ -10,16 +10,26 @@ import gc
 import copy
 from enum import Enum
 
+class SeparationMode(Enum):
+    """ How the quantization model gets splitted
+    - first_quantized_weights : int = 0
+    - first_floating_weights : int = 1
+    - first_floating_weights_quantized_model : int = 2
+    """
+    first_quantized_weights : int = 0
+    first_floating_weights : int = 1
+    first_floating_weights_quantized_model : int = 2
+
 class ModelEvaluationMode(Enum):
     """ Model Evaluation Mode
     - The original model will be split in 2 parts:
         * The first one will have quantized inputs
         * The second part will follow a behavior according to the Enum case
     - Modify the enum value to indicate the mode of evaluation of data:
-        * m2_quantized: The second part will operate with an input quantizing layer with floating point weights.
-        * no_input_saturation: the second part will operate with floating point weights without an input quantizing layer.
-        * manual_saturation: the second part will operate with floating point weights but their values are previously manually saturated.
-        * multi_relu: applying an integer manual multichannel relu activation function.
+        * m2_quantized = 0: The second part will operate with an input quantizing layer with floating point weights.
+        * no_input_saturation = 1: the second part will operate with floating point weights without an input quantizing layer.
+        * manual_saturation = 2: the second part will operate with floating point weights but their values are previously manually saturated.
+        * multi_relu = 3: applying an integer manual multichannel relu activation function.
     """
     m2_quantized : int = 0
     no_input_saturation : int = 1
@@ -79,7 +89,7 @@ class QuantizedModelInfo():
         self.output_zeros : OrderedDict[str, int] = OrderedDict()
         self.kernel_max_vars : OrderedDict[str, npt.NDArray[np.float32]] = OrderedDict()
         self.kernel_min_vars : OrderedDict[str, npt.NDArray[np.float32]] = OrderedDict()
-        self.kernel_scales : OrderedDict[str, npt.NDArray[np.float32]] = OrderedDict()
+        self.kernel_scales : OrderedDict[str, npt.NDArray[np.float64]] = OrderedDict()
         self.bias_scales : OrderedDict[str, npt.NDArray[np.float64]] = OrderedDict()
 
         for i, index in enumerate(self.layers_indexes):
@@ -100,7 +110,7 @@ class QuantizedModelInfo():
                         kernel_min_var = nt_variable
                     if "kernel_max" in nt_variable.name:
                         kernel_max_var = nt_variable
-            self.output_scales[key] = ((max_var - min_var).numpy()/(2**bit_width - 1)).astype(np.float32)
+            self.output_scales[key] = (max_var - min_var).numpy().astype(np.float64)/(2**bit_width - 1)
             self.dequantized_output_max[key] = self.output_scales[key]*np.round(max_var.numpy()/self.output_scales[key])
             self.dequantized_output_min[key] = self.output_scales[key]*np.round(min_var.numpy()/self.output_scales[key])
             if i != 0:
@@ -110,27 +120,27 @@ class QuantizedModelInfo():
                 self.input_zeros[key] = self.output_zeros[self.keys[i - 1]]
                 self.kernel_max_vars[key] = kernel_max_var.numpy()
                 self.kernel_min_vars[key] = kernel_min_var.numpy()
-                self.kernel_scales[key] = (kernel_max_var - kernel_min_var).numpy()/(2**bit_width - 2)
-                self.bias_scales[key] = self.input_scales[key].astype(np.float64)*self.kernel_scales[key].astype(np.float)
+                self.kernel_scales[key] = (kernel_max_var - kernel_min_var).numpy().astype(np.float64)/(2**bit_width - 2)
+                self.bias_scales[key] = self.input_scales[key]*self.kernel_scales[key]
                 self.quantized_post_activ_max[key] = np.round(self.dequantized_output_max[key]/self.bias_scales[key]).astype(int)
                 self.quantized_post_activ_min[key] = np.round(self.dequantized_output_min[key]/self.bias_scales[key]).astype(int)
             self.output_max[key] = max_var.numpy()
             self.output_min[key] = min_var.numpy()
-            self.output_zeros[key] = -(2**(bit_width - 1) + np.round(min_var.numpy()/self.output_scales[key]).astype(int))
+            self.output_zeros[key] = -2**(bit_width - 1) + np.round((0 - min_var.numpy())/self.output_scales[key]).astype(int)
 
     def generate_quantized_weights_and_biases(self, bit_width : int = 8) -> None:
         """ Generates the quantized int values of the kernels weights and biases
         - quantized_weights : The quantized weights of every kernel of all the convolutional and dense layers
         - quantized_bias : The quantized biases of every convolutional and dense layers
         """
-        self.quantized_bias : OrderedDict[str, npt.NDArray[np.int32]] = OrderedDict()
+        self.quantized_biases : OrderedDict[str, npt.NDArray[np.int32]] = OrderedDict()
         self.quantized_and_dequantized_weights : OrderedDict[str, npt.NDArray[np.int32]] = OrderedDict()
         self.quantized_weights : OrderedDict[str, npt.NDArray[np.int32]] = OrderedDict()
 
         for i, index in enumerate(self.layers_indexes):
             key = self.keys[i]
             if len(self.quantized_model.layers[index].trainable_variables) != 0:
-                self.quantized_bias[key] = np.round(self.quantized_model.layers[index].trainable_variables[self.TVAR_BIAS].numpy()/self.bias_scales[key]).astype(int)
+                self.quantized_biases[key] = np.round(self.quantized_model.layers[index].trainable_variables[self.TVAR_BIAS].numpy()/self.bias_scales[key]).astype(int)
                 if "conv2d" in key:
                     self.quantized_and_dequantized_weights[key] = tf.quantization.fake_quant_with_min_max_vars_per_channel(self.quantized_model.layers[index].trainable_variables[self.TVAR_KERNEL], self.kernel_min_vars[key], self.kernel_max_vars[key], bit_width, narrow_range = True).numpy()
                 elif "dense" in key:
@@ -330,7 +340,7 @@ def split_model(model : Functional | tf.keras.Model, start_index : int = 3) -> T
 
     return m1, m2
 
-def split_model_mixed(q_aware_model : Functional | tf.keras.Model, q_model_info : QuantizedModelInfo, start_index : int = 3, first_quantized : bool = False) -> Tuple[tf.keras.Model, tf.keras.Model]:
+def split_model_mixed(q_aware_model : Functional | tf.keras.Model, q_model_info : QuantizedModelInfo, start_index : int = 3, separation_mode : SeparationMode = SeparationMode.first_floating_weights) -> Tuple[tf.keras.Model, tf.keras.Model]:
     """ Divides the model in 2
     - First part model with either quantized or non-quantized weights
     - Second part model with dequantized weights (floating point)
@@ -341,7 +351,8 @@ def split_model_mixed(q_aware_model : Functional | tf.keras.Model, q_model_info 
     layers_part_2 : List[Dict[str, int | str | Dict | List]] = copy.deepcopy(configuration['layers'][start_index:])
 
     # Modifies the configuration of the layers of the first part model
-    if first_quantized:
+    # if first_quantized_weights:
+    if separation_mode != SeparationMode.first_floating_weights_quantized_model:
         layers_part_1 = unwrapp_layers(layers_part_1)
         layers_part_1[-1]['config']['activation'] = 'linear'
         layers_part_1[-1]['config']['use_bias'] = False
@@ -382,33 +393,60 @@ def split_model_mixed(q_aware_model : Functional | tf.keras.Model, q_model_info 
     weights = [q_aware_model.layers[idx].get_weights() for idx in range(len(q_aware_model.layers))]
     new_weights = copy.deepcopy(weights[:start_index])
 
-    if first_quantized:
-        i = 0
-        idx = 0
-        for j in range(len(new_weights)):
-            idx = q_model_info.layers_indexes[i]
-            key = q_model_info.keys[i]
-            if j == idx:
-                if 'quantize_layer' not in key:
-                    if idx < start_index - 1:
-                        new_weights[j] = [q_model_info.quantized_weights[key], q_model_info.quantized_bias[key]]
-                    else:
-                        new_weights[j] = [q_model_info.quantized_weights[key]]
-                i += 1
-            else:
-                new_weights[j] = []
+    match(separation_mode):
+        case SeparationMode.first_quantized_weights:
+            i = 0
+            idx = 0
+            for j in range(len(new_weights)):
+                idx = q_model_info.layers_indexes[i]
+                key = q_model_info.keys[i]
+                if j == idx:
+                    if 'quantize_layer' not in key:
+                        if idx < start_index - 1:
+                            new_weights[j] = [q_model_info.quantized_weights[key], q_model_info.quantized_biases[key]]
+                        else:
+                            new_weights[j] = [q_model_info.quantized_weights[key]]
+                    i += 1
+                else:
+                    new_weights[j] = []
 
-        i = 0
-        quantize_index : int | None = None
-        while quantize_index is None and i < len(configuration['layers']):
-            if 'QuantizeLayer' in configuration['layers'][i]['class_name']:
-                quantize_index = i
-            i += 1
-        # Position occupied by the input-quantizing-layer
-        del new_weights[quantize_index]
-    else:
-        # Position occupied by the bias values
-        del new_weights[-1][1]
+            i = 0
+            quantize_index : int | None = None
+            while quantize_index is None and i < len(configuration['layers']):
+                if 'QuantizeLayer' in configuration['layers'][i]['class_name']:
+                    quantize_index = i
+                i += 1
+            # Position occupied by the input-quantizing-layer
+            del new_weights[quantize_index]
+        case SeparationMode.first_floating_weights:
+            i = 0
+            idx = 0
+            for j in range(len(new_weights)):
+                idx = q_model_info.layers_indexes[i]
+                key = q_model_info.keys[i]
+                if j == idx:
+                    if 'quantize_layer' not in key:
+                        if idx < start_index - 1:
+                            new_weights[j] = [new_weights[j][0], new_weights[j][1]]
+                        else:
+                            new_weights[j] = [new_weights[j][0]]
+                    i += 1
+                else:
+                    new_weights[j] = []
+
+            i = 0
+            quantize_index : int | None = None
+            while quantize_index is None and i < len(configuration['layers']):
+                if 'QuantizeLayer' in configuration['layers'][i]['class_name']:
+                    quantize_index = i
+                i += 1
+            # Position occupied by the input-quantizing-layer
+            del new_weights[quantize_index]
+        case SeparationMode.first_floating_weights_quantized_model:
+            # Position occupied by the bias values
+            del new_weights[-1][1]
+        case _:
+            pass
 
     # Weights assignation
     for idx in range(len(m1.layers)):
@@ -529,7 +567,25 @@ def model_partial_evaluate(q_aware_model: Functional | tf.keras.Model, layer_ind
     accuracy = (prediction_digits == test_labels).mean()
     return loss, accuracy
 
-def prediction_by_batches(data_input : npt.NDArray[np.int32], 
+def model_predict_by_batches(data_input : npt.NDArray[np.int32] | npt.NDArray[np.float32], 
+n_partitions : int, 
+model : tf.keras.Model | None = None) -> npt.NDArray[np.float32 | np.int32]:
+    """ Evaluates the model and deletes memory unused
+    """
+    BATCH_SIZE = data_input.shape[0]//n_partitions
+    conv : List[npt.NDArray[np.float32]] | npt.NDArray[np.float32] = []
+    for i in range(n_partitions):
+        batch_conv : npt.NDArray[np.float32] = model.predict(data_input[i*BATCH_SIZE: (i + 1)*BATCH_SIZE]) # np.float32
+        conv.append(batch_conv)
+
+    # Garbage collection
+    del batch_conv # 351.5626 MBi Numpy array
+    garbage_collection()
+    conv = np.concatenate(conv) # 703.12515 MBi after conversion, 88 bytes before conversion. Important it must be int32 for flipping values later and avoiding rounding error when using float32
+    
+    return conv
+
+def model_parts_predict_by_batches(data_input : npt.NDArray[np.int32], 
 test_labels : npt.NDArray[np.uint8],
 n_partitions : int, 
 q_model_info : QuantizedModelInfo,
@@ -565,7 +621,7 @@ start_index : int = 3) -> Tuple[npt.NDArray[np.int32], float, float]:
         # Multiplication of an eager tensor by a numpy array will yield the same output dtype as of the eager tensor regardless of the numpy array dtype
         # On the other hand multiplying 2 np.arrays() will preserve the highest memory requirement
         # Use .numpy() method to convert tensor to numpy array because the multiplication preserves highest dtype.
-        batch_quant_postactiv : npt.NDArray[np.int32] = tf.nn.relu(tf.nn.bias_add(batch_quant_conv, q_model_info.quantized_bias[key])).numpy().astype(int)
+        batch_quant_postactiv : npt.NDArray[np.int32] = tf.nn.relu(tf.nn.bias_add(batch_quant_conv, q_model_info.quantized_biases[key])).numpy().astype(int)
         if model_1 is None and evaluation_mode == ModelEvaluationMode.multi_relu:
             for channel in range(batch_quant_postactiv.shape[-1]):
                 batch_quant_postactiv[:,:,:, channel][batch_quant_postactiv[:,:,:, channel] >= q_model_info.quantized_post_activ_max[key][channel]] = q_model_info.quantized_post_activ_max[key][channel]
