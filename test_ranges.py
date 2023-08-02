@@ -319,7 +319,7 @@ model : tf.keras.Model | None = None) -> None:
 N_PARTITIONS = 2
 # First index of q_aware_model
 SPLIT_INDEX = 3
-SEPARATION_MODE = Quantization.SeparationMode(2)
+SEPARATION_MODE = Quantization.SeparationMode(0)
 # LOAD_PATH_Q_AWARE = "./model/model_q_aware_final_01"
 LOAD_PATH_Q_AWARE = "./model/model_q_aware_ep5_2023-07-02_16-50-58"
 
@@ -337,7 +337,7 @@ q_model_info = Quantization.QuantizedModelInfo(q_aware_model)
 quantized_test_images = np.round(test_images[:,:,:,np.newaxis]/q_model_info.output_scales[q_model_info.keys[0]]).astype(int)
 
 # Generating the split models
-m1, m2 = Quantization.split_model_mixed(q_aware_model, q_model_info, start_index = SPLIT_INDEX, separation_mode = SEPARATION_MODE)
+m1, m2 = Quantization.split_model_mixed(q_aware_model, q_model_info, start_index = SPLIT_INDEX, first_part_mode = SEPARATION_MODE)
 
 if SEPARATION_MODE == Quantization.SeparationMode.first_quantized_weights:
     by_batches_quantized(

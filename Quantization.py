@@ -19,6 +19,8 @@ class SeparationMode(Enum):
     first_quantized_weights : int = 0
     first_floating_weights : int = 1
     first_floating_weights_quantized_model : int = 2
+    second_quantized_model : int = 3
+    second_tflite_model : int = 4
 
 class ModelEvaluationMode(Enum):
     """ Model Evaluation Mode
@@ -31,7 +33,6 @@ class ModelEvaluationMode(Enum):
         * manual_saturation = 2: the second part will operate with floating point weights but their values are previously manually saturated.
         * multi_relu = 3: applying an integer manual multichannel relu activation function.
     """
-    m2_quantized : int = 0
     no_input_saturation : int = 1
     manual_saturation : int = 2
     multi_relu : int = 3
@@ -233,12 +234,15 @@ def garbage_collection():
     if tf.config.list_physical_devices('GPU'):
         tf.config.experimental.reset_memory_stats('GPU:0')
 
-def evaluate_model(interpreter: tf.lite.Interpreter, test_images : np.ndarray, test_labels : np.ndarray) -> Tuple[float, float]:
+def evaluate_tflite(interpreter: tf.lite.Interpreter, test_images : np.ndarray, test_labels : np.ndarray, verbose : int = 0) -> Tuple[float, float]:
     """ Evaluate TFLite Model:
     - Receives the interpreter and returns a tuple of loss and accuracy.
     """
     input_index = interpreter.get_input_details()[0]["index"]
     output_index = interpreter.get_output_details()[0]["index"]
+
+    if verbose != 0:
+        print(interpreter.get_input_details())
 
     # Run predictions on every image in the "test" dataset.
     prediction_digits = []
@@ -246,7 +250,6 @@ def evaluate_model(interpreter: tf.lite.Interpreter, test_images : np.ndarray, t
     for i, test_image in enumerate(test_images):
         # Pre-processing: add batch dimension and convert to float32 to match with the model's input data format.
         test_image = np.expand_dims(test_image, axis = 0).astype(np.float32)
-        test_image = np.expand_dims(test_image, axis = 3).astype(np.float32)
         interpreter.set_tensor(input_index, test_image)
 
         # Run inference.
@@ -340,7 +343,12 @@ def split_model(model : Functional | tf.keras.Model, start_index : int = 3) -> T
 
     return m1, m2
 
-def split_model_mixed(q_aware_model : Functional | tf.keras.Model, q_model_info : QuantizedModelInfo, start_index : int = 3, separation_mode : SeparationMode = SeparationMode.first_floating_weights) -> Tuple[tf.keras.Model, tf.keras.Model]:
+def split_model_mixed(
+    q_aware_model : Functional | tf.keras.Model, 
+    q_model_info : QuantizedModelInfo, 
+    start_index : int = 3, 
+    first_part_mode : SeparationMode = SeparationMode.first_floating_weights, 
+    second_part_mode : SeparationMode = SeparationMode.second_quantized_model) -> Tuple[tf.keras.Model, tf.keras.Model | tf.lite.Interpreter]:
     """ Divides the model in 2
     - First part model with either quantized or non-quantized weights
     - Second part model with dequantized weights (floating point)
@@ -352,7 +360,7 @@ def split_model_mixed(q_aware_model : Functional | tf.keras.Model, q_model_info 
 
     # Modifies the configuration of the layers of the first part model
     # if first_quantized_weights:
-    if separation_mode != SeparationMode.first_floating_weights_quantized_model:
+    if first_part_mode != SeparationMode.first_floating_weights_quantized_model:
         layers_part_1 = unwrapp_layers(layers_part_1)
         layers_part_1[-1]['config']['activation'] = 'linear'
         layers_part_1[-1]['config']['use_bias'] = False
@@ -374,9 +382,20 @@ def split_model_mixed(q_aware_model : Functional | tf.keras.Model, q_model_info 
     
     # Add input layer to the second part model
     input_config = copy.deepcopy(layers_part_1[0])
-    input_config['config']['batch_input_shape'] = m1.output_shape 
-    layers_part_2[0]['inbound_nodes'][0][0][0] = input_config['name']
-    layers_part_2.insert(0, input_config)
+    input_config['config']['batch_input_shape'] = m1.output_shape
+    input_config['name'] = 'input_2'
+    input_config['config']['name'] = input_config['name']
+    
+    if second_part_mode == SeparationMode.second_quantized_model: 
+        layers_part_2[0]['inbound_nodes'][0][0][0] = input_config['name']
+        layers_part_2.insert(0, input_config)
+    elif second_part_mode == SeparationMode.second_tflite_model:
+        quantization_config = copy.deepcopy(configuration['layers'][1])
+        layers_part_2[0]['inbound_nodes'][0][0][0] = quantization_config['name']
+        quantization_config['inbound_nodes'][0][0][0] = input_config['name']
+        layers_part_2 = [input_config, quantization_config] + layers_part_2
+    else:
+        pass
 
     m2_configuration = {
         'name' : 'model_part_2',
@@ -391,24 +410,25 @@ def split_model_mixed(q_aware_model : Functional | tf.keras.Model, q_model_info 
 
     # Weights extraction
     weights = [q_aware_model.layers[idx].get_weights() for idx in range(len(q_aware_model.layers))]
-    new_weights = copy.deepcopy(weights[:start_index])
+    first_weights = copy.deepcopy(weights[:start_index])
+    second_weights = copy.deepcopy(weights[start_index:])
 
-    match(separation_mode):
+    match first_part_mode:
         case SeparationMode.first_quantized_weights:
             i = 0
             idx = 0
-            for j in range(len(new_weights)):
+            for j in range(len(first_weights)):
                 idx = q_model_info.layers_indexes[i]
                 key = q_model_info.keys[i]
                 if j == idx:
                     if 'quantize_layer' not in key:
                         if idx < start_index - 1:
-                            new_weights[j] = [q_model_info.quantized_weights[key], q_model_info.quantized_biases[key]]
+                            first_weights[j] = [q_model_info.quantized_weights[key], q_model_info.quantized_biases[key]]
                         else:
-                            new_weights[j] = [q_model_info.quantized_weights[key]]
+                            first_weights[j] = [q_model_info.quantized_weights[key]]
                     i += 1
                 else:
-                    new_weights[j] = []
+                    first_weights[j] = []
 
             i = 0
             quantize_index : int | None = None
@@ -417,22 +437,22 @@ def split_model_mixed(q_aware_model : Functional | tf.keras.Model, q_model_info 
                     quantize_index = i
                 i += 1
             # Position occupied by the input-quantizing-layer
-            del new_weights[quantize_index]
+            del first_weights[quantize_index]
         case SeparationMode.first_floating_weights:
             i = 0
             idx = 0
-            for j in range(len(new_weights)):
+            for j in range(len(first_weights)):
                 idx = q_model_info.layers_indexes[i]
                 key = q_model_info.keys[i]
                 if j == idx:
                     if 'quantize_layer' not in key:
                         if idx < start_index - 1:
-                            new_weights[j] = [new_weights[j][0], new_weights[j][1]]
+                            first_weights[j] = [first_weights[j][0], first_weights[j][1]]
                         else:
-                            new_weights[j] = [new_weights[j][0]]
+                            first_weights[j] = [first_weights[j][0]]
                     i += 1
                 else:
-                    new_weights[j] = []
+                    first_weights[j] = []
 
             i = 0
             quantize_index : int | None = None
@@ -441,23 +461,44 @@ def split_model_mixed(q_aware_model : Functional | tf.keras.Model, q_model_info 
                     quantize_index = i
                 i += 1
             # Position occupied by the input-quantizing-layer
-            del new_weights[quantize_index]
+            del first_weights[quantize_index]
         case SeparationMode.first_floating_weights_quantized_model:
             # Position occupied by the bias values
-            del new_weights[-1][1]
+            del first_weights[-1][1]
+        case _:
+            pass
+
+    second_weights = [[]] + second_weights
+    match second_part_mode:
+        case SeparationMode.second_quantized_model:
+            pass
+        case SeparationMode.second_tflite_model:
+            second_weights.insert(1, [weights[start_index - 1][-2], weights[start_index - 1][-1], -1])
         case _:
             pass
 
     # Weights assignation
     for idx in range(len(m1.layers)):
-        m1.layers[idx].set_weights(new_weights[idx])
+        m1.layers[idx].set_weights(first_weights[idx])
 
-    for i, idx in enumerate(range(start_index, len(q_aware_model.layers))):
-        m2.layers[i + 1].set_weights(weights[idx])
+    for idx in range(len(m2.layers)):
+        m2.layers[idx].set_weights(second_weights[idx])
 
     m2.compile(optimizer = 'adam', 
         loss = 'sparse_categorical_crossentropy', 
         metrics = ['accuracy'])
+
+    if second_part_mode == SeparationMode.second_tflite_model:
+        # Conversion to TF Lite model
+        converter_2 = tf.lite.TFLiteConverter.from_keras_model(m2)
+        converter_2.optimizations = [tf.lite.Optimize.DEFAULT]
+        tflite_2 = converter_2.convert()
+        interpreter_2 = tf.lite.Interpreter(model_content = tflite_2)
+        # # Save TFLite model
+        # with open("./model/tflite_test.tflite", 'wb') as output_file:
+        #     output_file.write(tflite_2)
+
+        return m1, interpreter_2
 
     return m1, m2
 
@@ -590,7 +631,7 @@ test_labels : npt.NDArray[np.uint8],
 n_partitions : int, 
 q_model_info : QuantizedModelInfo,
 model_1 : tf.keras.Model | None = None,
-model_2 : tf.keras.Model | None = None,
+model_2 : tf.keras.Model | tf.lite.Interpreter | None = None,
 evaluation_mode : ModelEvaluationMode = ModelEvaluationMode.manual_saturation,
 start_index : int = 3) -> Tuple[npt.NDArray[np.int32], float, float]:
     """ Evaluates both parts of the model and deletes memory unused
@@ -602,14 +643,18 @@ start_index : int = 3) -> Tuple[npt.NDArray[np.int32], float, float]:
     - Manual garbage collection functions are called multiple times
     """
     # Batch analysis for testing and avoid memory head overload
-    BATCH_SIZE = test_labels.shape[0]//n_partitions
+    if test_labels.shape[0] != 1:
+        BATCH_SIZE = test_labels.shape[0]//n_partitions
+    else:
+        BATCH_SIZE = test_labels.shape[0]
+    n_iterations = test_labels.shape[0]//BATCH_SIZE
     idx = q_model_info.layers_indexes.index(start_index - 1)
     key = q_model_info.keys[idx]
     # Must be done in batches
     # model.predict(), tf.nn.bias_add(), tf.nn.relu(), and all eager tensor operations may exceed memory allocation
     quant_conv : List[npt.NDArray[np.float32]] | npt.NDArray[np.int32] = []
     quant_postactiv : List[npt.NDArray[np.int32]] | npt.NDArray[np.int32] = []
-    for i in range(n_partitions):
+    for i in range(n_iterations):
         # Output type of .predict() method is float32, there is no conflict as the results are convolution sumations and multiplication of 8 bit numbers
         # No rounding problem as the maximum int value is as big as 18 bits
         # Bigger values than 24 bits will produce rounding error when using tf.float32 number values
@@ -654,12 +699,14 @@ start_index : int = 3) -> Tuple[npt.NDArray[np.int32], float, float]:
             pass
         case ModelEvaluationMode.multi_relu:
             pass
-        case ModelEvaluationMode.m2_quantized:
-            pass
         case _:
             pass
-    # test_loss, test_accuracy = model_partial_evaluate(model_2, layer_index_start = start_index, data_input = rescaled_postactiv, test_labels = test_labels)
-    test_loss, test_accuracy = model_2.evaluate(rescaled_postactiv, test_labels, verbose = 0)
+    
+    if isinstance(model_2, tf.lite.Interpreter):
+        model_2.allocate_tensors()
+        test_loss, test_accuracy = evaluate_tflite(model_2, rescaled_postactiv, test_labels, verbose = 0)
+    if isinstance(model_2, tf.keras.Model):
+        test_loss, test_accuracy = model_2.evaluate(rescaled_postactiv, test_labels, verbose = 0)
 
     # Garbage collection
     del rescaled_postactiv # 703.125 MBi Numpy array

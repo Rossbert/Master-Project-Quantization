@@ -13,6 +13,8 @@ def evaluate_model(interpreter: tf.lite.Interpreter) -> Tuple[float, float]:
     input_index = interpreter.get_input_details()[0]["index"]
     output_index = interpreter.get_output_details()[0]["index"]
 
+    print(interpreter.get_input_details())
+
     # Run predictions on every image in the "test" dataset.
     prediction_digits = []
     predictions = []

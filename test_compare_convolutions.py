@@ -27,8 +27,8 @@ q_model_info = Quantization.QuantizedModelInfo(q_aware_model)
 quantized_test_images = np.round(test_images[:,:,:,np.newaxis]/q_model_info.output_scales[q_model_info.keys[0]]).astype(int)
 
 # Generating the split models
-m1_quantized, _ = Quantization.split_model_mixed(q_aware_model, q_model_info, start_index = SPLIT_INDEX, separation_mode = Quantization.SeparationMode.first_quantized_weights)
-m1_nonquantized, _ = Quantization.split_model_mixed(q_aware_model, q_model_info, start_index = SPLIT_INDEX, separation_mode = Quantization.SeparationMode.first_floating_weights)
+m1_quantized, _ = Quantization.split_model_mixed(q_aware_model, q_model_info, start_index = SPLIT_INDEX, first_part_mode = Quantization.SeparationMode.first_quantized_weights)
+m1_nonquantized, _ = Quantization.split_model_mixed(q_aware_model, q_model_info, start_index = SPLIT_INDEX, first_part_mode = Quantization.SeparationMode.first_floating_weights)
 
 IMAGE = 0
 CHANNEL = 10 # 10

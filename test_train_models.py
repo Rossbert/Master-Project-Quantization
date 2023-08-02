@@ -90,7 +90,7 @@ q_aware_model.compile(optimizer = 'adam',
 q_aware_model.summary()
 train_log = q_aware_model.fit(train_images, train_labels,
                                 batch_size = 128,
-                                epochs = 1,
+                                epochs = 5,
                                 validation_split = 0.1)
 q_aware_test_loss, q_aware_test_acc = q_aware_model.evaluate(test_images, test_labels)
 print('Q Aware test accuracy : ', "{:0.2%}".format(q_aware_test_acc))

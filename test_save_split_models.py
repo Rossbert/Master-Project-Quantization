@@ -42,7 +42,7 @@ key_conv = q_model_info.keys[idx_conv]
 quantized_test_images = np.round(test_images[:,:,:,np.newaxis]/q_model_info.output_scales[q_model_info.keys[0]]).astype(int)
 
 # Generating the split models
-model_1, model_2 = Quantization.split_model_mixed(q_aware_model, q_model_info, start_index = SPLIT_INDEX, separation_mode = SEPARATION_MODE)
+model_1, model_2 = Quantization.split_model_mixed(q_aware_model, q_model_info, start_index = SPLIT_INDEX, first_part_mode = SEPARATION_MODE)
 
 quantized_conv, test_loss, test_accuracy = Quantization.model_parts_predict_by_batches(
     data_input = quantized_test_images,

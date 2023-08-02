@@ -51,7 +51,7 @@ q_aware_test_loss, q_aware_test_acc = q_aware_model.evaluate(test_images, test_l
 print('Q Aware model test accuracy : ', "{:0.2%}".format(q_aware_test_acc))
 print('Q Aware model test loss: ', q_aware_test_loss)
 interpreter.allocate_tensors()
-tflite_test_loss, tflite_test_accuracy = Quantization.evaluate_model(interpreter, test_images, test_labels)
+tflite_test_loss, tflite_test_accuracy = Quantization.evaluate_tflite(interpreter, test_images, test_labels)
 print('TFLite model test accuracy:', "{:0.2%}".format(tflite_test_accuracy))
 print('TFLite model test loss: ', tflite_test_loss)
 

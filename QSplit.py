@@ -24,11 +24,11 @@ Parameters to be tuned:
     * 2 = 2nd part manual saturation: the second part will operate with floating point weights but their values are previously manually saturated.
     * 3 = 2nd part multichannel relu: applying an integer manual saturation multichannel relu activation function.
 """
-N_SIMULATIONS = 5                                       # Number of repetitions of everything
+N_SIMULATIONS = 75                                      # Number of repetitions of everything
 N_FLIPS_LIMIT = 4                                       # Maximum total number of flips per simulation
 BIT_STEPS_PROB = 1                                      # Divisor of 32, from 1 to 32
 
-OPERATION_MODE = 2                                      # Modification of operation mode
+OPERATION_MODE = 3                                      # Modification of operation mode
 # Quantification constants
 BIAS_BIT_WIDTH = 32
 # Number of partitions for batch analysis
@@ -38,9 +38,12 @@ SPLIT_INDEX = 3
 SEPARATION_MODE = Quantization.SeparationMode.first_quantized_weights
 
 OUTPUTS_DIR = "./outputs/"
-LOAD_PATH_Q_AWARE = "./model/model_q_aware_final_01"
+LOAD_PATH_Q_AWARE = "./model/model_q_aware_ep5_2023-07-02_16-50-58"
+# LOAD_PATH_Q_AWARE = "./model/model_q_aware_final_01"
 operation_mode = Quantization.ModelEvaluationMode(OPERATION_MODE)
-SAVE_FILE_NAME = f"QSplit_{operation_mode.name}_{datetime.datetime.now().strftime('%Y-%m-%d')}.csv"
+# SAVE_FILE_NAME = f"QSplit_{LOAD_PATH_Q_AWARE[-8:]}_{operation_mode.name}_{datetime.datetime.now().strftime('%Y-%m-%d')}.csv"
+SAVE_FILE_NAME = f"QSplit_16-50-58_multi_relu_2023-07-12.csv"
+# SAVE_FILE_NAME = f"QSplit_final_01_multi_relu_2023-06-18.csv"
 SAVE_DATA_PATH = OUTPUTS_DIR + SAVE_FILE_NAME
 
 if not os.path.exists(OUTPUTS_DIR):
@@ -67,7 +70,7 @@ key_conv = q_model_info.keys[idx_conv]
 quantized_test_images = np.round(test_images[:,:,:,np.newaxis]/q_model_info.output_scales[q_model_info.keys[0]]).astype(int)
 
 # Generating the split models
-model_1, model_2 = Quantization.split_model_mixed(q_aware_model, q_model_info, start_index = SPLIT_INDEX, separation_mode = SEPARATION_MODE)
+model_1, model_2 = Quantization.split_model_mixed(q_aware_model, q_model_info, start_index = SPLIT_INDEX, first_part_mode = SEPARATION_MODE)
 
 # Generating the quantized convolution output for the test set, as the test set is unique so is the quantized output of the convolution
 quantized_conv, test_loss, test_accuracy = Quantization.model_parts_predict_by_batches(
