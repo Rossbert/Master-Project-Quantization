@@ -11,10 +11,21 @@ import copy
 from enum import Enum
 
 class SeparationMode(Enum):
-    """ How the quantization model gets splitted
+    """ How the quantization model gets splitted.
+
+    For the first part:
     - first_quantized_weights : int = 0
+        - The first part will be a (non-quantized) keras model that will have the quantized weights and biases
     - first_floating_weights : int = 1
+        - The first part will use the floating weights of the quantized model in a (non-quantized) keras model 
     - first_floating_weights_quantized_model : int = 2
+        - The first part will use the floating weights of the quantized model in a (quantized) keras model
+
+    For the second part:
+    - second_quantized_model : int = 3
+        - The second part will be split as it is, without a quantization layer
+    - second_tflite_model : int = 4
+        - The second part will be given a quantization layer and then converted to a TFLite model
     """
     first_quantized_weights : int = 0
     first_floating_weights : int = 1
@@ -24,16 +35,13 @@ class SeparationMode(Enum):
 
 class ModelEvaluationMode(Enum):
     """ Model Evaluation Mode
-    - The original model will be split in 2 parts:
-        * The first one will have quantized inputs
-        * The second part will follow a behavior according to the Enum case
-    - Modify the enum value to indicate the mode of evaluation of data:
-        * m2_quantized = 0: The second part will operate with an input quantizing layer with floating point weights.
-        * no_input_saturation = 1: the second part will operate with floating point weights without an input quantizing layer.
-        * manual_saturation = 2: the second part will operate with floating point weights but their values are previously manually saturated.
-        * multi_relu = 3: applying an integer manual multichannel relu activation function.
+    - The way data is handled at the end of the first part of the split model.
+    - Modify the enum value to indicate the mode of evaluation of data at the end of the first part model:
+        * no_output_saturation = 1: the data at the end of the first model won't be saturated.
+        * manual_saturation = 2: the data at the end of the first model is manually saturated after the activation.
+        * multi_relu = 3: the data at the end of the first model is saturated by an integer-manual-multichannel-relu activation function.
     """
-    no_input_saturation : int = 1
+    no_output_saturation : int = 1
     manual_saturation : int = 2
     multi_relu : int = 3
 
@@ -695,7 +703,7 @@ start_index : int = 3) -> Tuple[npt.NDArray[np.int32], float, float]:
         case ModelEvaluationMode.manual_saturation:
             rescaled_postactiv[rescaled_postactiv >= q_model_info.dequantized_output_max[key]] = q_model_info.dequantized_output_max[key]
             rescaled_postactiv[rescaled_postactiv <= q_model_info.dequantized_output_min[key]] = q_model_info.dequantized_output_min[key]
-        case ModelEvaluationMode.no_input_saturation:
+        case ModelEvaluationMode.no_output_saturation:
             pass
         case ModelEvaluationMode.multi_relu:
             pass
