@@ -1,4 +1,5 @@
 import time
+import copy
 import datetime
 import os
 import csv
@@ -24,8 +25,8 @@ Parameters to be tuned:
     2 = manual_saturation : the data at the end of the first model is manually saturated after the activation.
     3 = multi_relu : the data at the end of the first model is saturated by an integer-manual-multichannel-relu activation function.
 """
-N_SIMULATIONS = 50                                      # Number of repetitions of everything
-N_FLIPS_LIMIT = 4                                       # Maximum total number of flips per simulation
+N_SIMULATIONS = 20                                      # Number of repetitions of everything
+N_FLIPS_LIMIT = 1                                       # Maximum total number of flips per simulation
 BIT_STEPS_PROB = 1                                      # Divisor of 32, from 1 to 32
 OPERATION_MODE = 1                                      # Modification of operation mode
 
@@ -34,10 +35,8 @@ BIAS_BIT_WIDTH = 32
 # Number of partitions for batch analysis
 N_PARTITIONS = 2
 # First index of q_aware_model
-SPLIT_INDEX = 3
+SPLIT_KEY_INDEX = 3
 operation_mode = Quantization.ModelEvaluationMode(OPERATION_MODE)
-FIRST_SEPARATION = Quantization.SeparationMode.first_quantized_weights
-SECOND_SEPARATION = Quantization.SeparationMode.second_tflite_model
 
 OUTPUTS_DIR = "./outputs/"
 
@@ -46,7 +45,7 @@ LOAD_PATH_Q_AWARE = "./model/model_q_aware_ep5_2023-07-02_16-50-58"
 # LOAD_PATH_Q_AWARE = "./model/model_q_aware_final_01"
 
 # Save path
-SAVE_FILE_NAME = f"QSplit_{LOAD_PATH_Q_AWARE[-8:]}_{operation_mode.name}_{SECOND_SEPARATION.name[7:-4]}_{datetime.datetime.now().strftime('%Y-%m-%d')}.csv"
+SAVE_FILE_NAME = f"QSplit_{LOAD_PATH_Q_AWARE[-8:]}_{operation_mode.name}_{datetime.datetime.now().strftime('%Y-%m-%d')}.csv"
 # SAVE_FILE_NAME = f"QSplit_16-50-58_multi_relu_2023-07-12.csv"
 # SAVE_FILE_NAME = f"QSplit_final_01_multi_relu_2023-06-18.csv"
 SAVE_DATA_PATH = OUTPUTS_DIR + SAVE_FILE_NAME
@@ -68,35 +67,34 @@ print(f"Q Aware model test accuracy : {q_aware_test_acc:.2%}")
 print(f"Q Aware model test loss: {q_aware_test_loss:.6f}")
 
 q_model_info = Quantization.QuantizedModelInfo(q_aware_model)
-idx_conv = q_model_info.layers_indexes.index(SPLIT_INDEX - 1)
-key_conv = q_model_info.keys[idx_conv]
+section_keys = copy.deepcopy(q_model_info.keys[1:])
+key = section_keys[split_key_index]
+
 
 # Preparing the quantized test set
-quantized_test_images = np.round(test_images[:,:,:,np.newaxis]/q_model_info.output_scales[q_model_info.keys[0]]).astype(int)
+test_images = test_images[:,:,:,np.newaxis]
 
 # Generating the split models
-model_1, model_2 = Quantization.split_model_mixed(q_aware_model, q_model_info, start_index = SPLIT_INDEX, first_part_mode = FIRST_SEPARATION, second_part_mode = SECOND_SEPARATION)
+models = Quantization.split_model_full(q_aware_model, q_model_info, split_key_index = SPLIT_KEY_INDEX, tflite_output = True)
 
+# x = models[0]._get_ops_details()
+
+t = time.time()
 # Generating the quantized convolution output for the test set, as the test set is unique so is the quantized output of the convolution
-quantized_conv, test_loss, test_accuracy = Quantization.model_parts_predict_by_batches(
-    data_input = quantized_test_images,
+quantized_conv, test_loss, test_accuracy = Quantization.model_full_predict_by_batches(
+    data_input = test_images,
     test_labels = test_labels,
     n_partitions = N_PARTITIONS,
     q_model_info = q_model_info,
-    model_1 = model_1,
-    model_2 = model_2,
-    evaluation_mode = operation_mode,
-    start_index = SPLIT_INDEX
+    models = models,
+    split_key_index = SPLIT_KEY_INDEX
     )
-
-print(f"Model test accuracy: {test_accuracy:.2%}")
-print(f"Model test loss: {test_loss:.6f}\n")
+print(f"Model by parts accuracy : {test_accuracy:.2%}")
+print(f"Model by parts loss: {test_loss:.6f}")
+print(f"Full model time is: {time.time() - t:.5f} seconds")
 
 # Deletion of unsused variable to diminish RAM usage, highest memory value so far
 del train_images # 358.8868 MBi
-del test_images # 59.8145 MBi
-del quantized_test_images # 29.9073 MBi
-del model_1 # 48 bytes
 Quantization.garbage_collection()
 
 total_time = time.time()
@@ -172,15 +170,13 @@ with open(SAVE_DATA_PATH, 'a', newline = '') as main_file:
                         # New int update value
                         quantized_conv_copy[position] = flipped_int
                 
-                _ , new_test_loss, new_test_accuracy = Quantization.model_parts_predict_by_batches(
+                new_test_loss, new_test_accuracy = Quantization.model_predict_corrupted_convolution(
                     data_input = quantized_conv_copy,
                     test_labels = test_labels,
                     n_partitions = N_PARTITIONS,
                     q_model_info = q_model_info,
-                    model_1 = None,
-                    model_2 = model_2,
-                    evaluation_mode = operation_mode,
-                    start_index = SPLIT_INDEX
+                    models = models,
+                    start_index = SPLIT_KEY_INDEX
                     )
 
                 print(f"Disturbed model test accuracy: {new_test_accuracy:.2%}")

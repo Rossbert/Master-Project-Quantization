@@ -1,2 +1,7 @@
 /model/16-50-58_first_conv_out.npy
 *.rar
+*.vs
+*.vscode
+bin
+bin-intermediates
+__pycache__
