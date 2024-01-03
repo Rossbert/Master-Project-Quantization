@@ -1,6 +1,6 @@
 import tensorflow as tf
 import tensorflow_model_optimization as tfmot
-from keras.engine.functional import Functional
+from keras.src.engine.functional import Functional
 import numpy as np
 import numpy.typing as npt
 from typing import Tuple, List, Dict, Any

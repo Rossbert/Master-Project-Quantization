@@ -2,11 +2,15 @@
 
 #include <iostream>
 #include <vector>
+#include <random>
 #include <tensorflow/lite/delegates/utils/simple_delegate.h>
 #include <tensorflow/lite/builtin_ops.h>
 #include <tensorflow/lite/kernels/kernel_util.h>
 #include <tensorflow/lite/kernels/internal/tensor_ctypes.h>
-#include "CustomLogTools.h"
+
+#include "Options.h"
+#include "ConvOps.h"
+#include "Logger.h"
 
 namespace tflite {
 
@@ -17,6 +21,9 @@ namespace tflite {
 	public:
 		// MyDelegateKernel constructor
 		MyDelegateKernel();
+
+		// MyDelegateKernel constructor
+		MyDelegateKernel(const MyDelegateOptions& options);
 
 		// MyDelegateKernel destructor
 		~MyDelegateKernel();
@@ -44,14 +51,24 @@ namespace tflite {
 		// Holds the builtin code of the ops.
 		// builtin_code_[i] is the type of node at index 'i'
 		std::vector<int> builtin_code_;
-		
-		// Computes the result of addition of 'input_tensor_1' and 'input_tensor_2'
-		// and store the result in 'output_tensor'.
-		template<typename T>
-		TfLiteStatus ComputeAddResult(TfLiteContext* context, int builtin_code,
-			const TfLiteTensor* input_tensor_1,
-			const TfLiteTensor* input_tensor_2,
-			TfLiteTensor* output_tensor);
+
+		// MyDelegateOptions to determine the behaviour of the delegate
+		MyDelegateOptions options_;
+
+		// Operation Data, later explore the possibility to store it as a vector
+		custom_ops::conv::OpData* operation_data_;
+
+		// Convolution Parameters, convert it to a vector
+		TfLiteConvParams* conv_params_;
+
+		// Prepared flag
+		bool prepared_ = false;
+
+		// Steals the Operation data from the to-be-replaced node
+		void GetOperationData(const custom_ops::conv::OpData&);
+
+		// Steals the Convolution Parameters from the to-be-replaced node
+		void GetConvParams(const TfLiteConvParams&);
 
 	};
 
@@ -63,13 +80,16 @@ namespace tflite {
 		// MyDelegate constructor
 		MyDelegate();
 
+		// MyDelegate constructor with MyDelegateOptions
+		MyDelegate(const MyDelegateOptions&);
+
 		// MyDelegate destructor
 		~MyDelegate();
 
 		// Returns true if 'node' is supported by the delegate. False otherwise.
 		bool IsNodeSupportedByDelegate(const TfLiteRegistration* registration,
-									   const TfLiteNode* node,
-									   TfLiteContext* context) const override;
+			const TfLiteNode* node,
+			TfLiteContext* context) const override;
 		
 		// Initialize the delegate before finding and replacing TfLite nodes with
 		// delegate kernels, for example, retrieving some TFLite settings from
@@ -90,14 +110,10 @@ namespace tflite {
 		// Returns SimpleDelegateInterface::Options which has delegate properties
 		// relevant for graph partitioning.
 		SimpleDelegateInterface::Options DelegateOptions() const override;
+
+	private:
+		// MyDelegateOptions to determine the behaviour of MyDelegate and MyDelegateKernel
+		MyDelegateOptions options_;
 	};
 
-	//template <typename T>
-	//TfLiteStatus ComputeAddResult(TfLiteContext* context, int builtin_code,
-	//	const TfLiteTensor* input_tensor_1,
-	//	const TfLiteTensor* input_tensor_2,
-	//	TfLiteTensor* output_tensor);
-
 }
-
-#include "CoreTemplates.h"

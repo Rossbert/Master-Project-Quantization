@@ -2,7 +2,7 @@ import numpy as np
 import tensorflow as tf
 import tensorflow_model_optimization as tfmot
 import Quantization
-from keras.engine.functional import Functional
+from keras.src.engine.functional import Functional
 from typing import Tuple
 
 def evaluate_model(interpreter: tf.lite.Interpreter) -> Tuple[float, float]:

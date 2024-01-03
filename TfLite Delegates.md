@@ -124,3 +124,80 @@ tflite shape = (4, 6)
 #include <tensorflow/lite/core/subgraph.h>
 - Add the include directory
 C:\Users\rosal\tensorflow source\tflite_c_build\flatbuffers\include
+
+
+
+## To make use of Ruy OS must be Android
+In Windows it retraces to the header minwindef.h
+Which redefined the max() as a macro which produces compilation errors
+
+Which gets into conflict with any call of std::max() from utility
+
+#include <tensorflow/lite/kernels/internal/optimized/integer_ops/conv.h>
+
+C:\Users\rosal\tensorflow source\tflite_c_build\ruy
+C:\Users\rosal\tensorflow source\tflite_c_build\pthreadpool-source\include
+
+
+
+// Necessary for convolutional optimized operations
+// Ruy is disabled in both Windwos and Linux (Only available in Android) so technically optimization is not performed
+// Requires: 
+// C:\Users\rosal\tensorflow source\tflite_c_build\ruy
+// C:\Users\rosal\tensorflow source\tflite_c_build\pthreadpool-source\include
+// Including the following somehow traces to the header file which redefines max() as a macro and produces compilation errors
+//#include <tensorflow/lite/kernels/internal/optimized/integer_ops/conv.h>
+
+
+
+// For multiprocessing?
+#include <assert.h>
+#include <internal/compute.h>
+#undef max
+#include <tensorflow/lite/kernels/eigen_support.h>
+#include <tensorflow/lite/kernels/internal/optimized/multithreaded_conv.h>
+
+# For Random number generation
+//#include <random>
+
+		//// Random generator
+		
+		
+
+
+valid_tensor_indexes = [*list(range(21)), *list(range(27,30))]
+        tensors = []
+        for i in valid_tensor_indexes:
+            try:
+                # print(f"Tensor {i}")
+                tensors.append(interpreter.get_tensor(i))
+            except:
+                # print(f"Cannot access tensor {i}")
+                tensors.append(None)
+
+
+
+
+    # for i in range(len(outputs)):
+    #     print(f"{outputs[i]} = {y[list(range(*index_range.indices(M)))[i]]}")
+    # print("")
+    # valid_tensor_indexes = [*list(range(21)), *list(range(27,30))]
+    # for i in range(len(tensors)):
+    #     print(f"Tensor {valid_tensor_indexes[i]}")
+    #     print(tensors[i])
+    #     print(f"New tensor {valid_tensor_indexes[i]}")
+    #     print(new_tensors[i])
+
+
+
+Why was this needed???
+C:\Users\rosal\tensorflow source\tensorflow_src\third_party\xla\third_party\tsl
+
+Is it neccessary??
+Both needed or not??
+C:\Users\rosal\tensorflow source\tflite_c_build\eigen
+C:\Users\rosal\tensorflow source\tflite_c_build\gemmlowp
+
+
+// Requires the path:
+// C:\Users\rosal\tensorflow source\tflite_c_build\gemmlowp

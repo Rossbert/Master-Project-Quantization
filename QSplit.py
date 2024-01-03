@@ -6,7 +6,7 @@ import numpy as np
 import tensorflow as tf
 import tensorflow_model_optimization as tfmot
 import Quantization
-from keras.engine.functional import Functional
+from keras.src.engine.functional import Functional
 
 """ Test to affect convolution operation on first layer. 
 
@@ -27,7 +27,7 @@ Parameters to be tuned:
 N_SIMULATIONS = 50                                      # Number of repetitions of everything
 N_FLIPS_LIMIT = 4                                       # Maximum total number of flips per simulation
 BIT_STEPS_PROB = 1                                      # Divisor of 32, from 1 to 32
-OPERATION_MODE = 1                                      # Modification of operation mode
+OPERATION_MODE = 2                                      # Modification of operation mode
 
 # Quantification constants
 BIAS_BIT_WIDTH = 32
@@ -62,10 +62,12 @@ test_images = test_images / 255.0
 with tfmot.quantization.keras.quantize_scope():
     q_aware_model : Functional = tf.keras.models.load_model(LOAD_PATH_Q_AWARE)
 
+simulation_time = time.time()
 # Evaluate accuracy of both models in test set
 q_aware_test_loss, q_aware_test_acc = q_aware_model.evaluate(test_images, test_labels)
 print(f"Q Aware model test accuracy : {q_aware_test_acc:.2%}")
 print(f"Q Aware model test loss: {q_aware_test_loss:.6f}")
+print(f"sim-time={datetime.timedelta(seconds = time.time() - simulation_time)}")
 
 q_model_info = Quantization.QuantizedModelInfo(q_aware_model)
 idx_conv = q_model_info.layers_indexes.index(SPLIT_INDEX - 1)
