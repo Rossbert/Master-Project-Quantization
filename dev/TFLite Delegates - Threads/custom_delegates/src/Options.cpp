@@ -16,6 +16,7 @@ namespace tflite {
 		errorPositions.resize(dataset_size);
 		realPositions.resize(dataset_size);
 	}
+
 	MyDelegateOptions::MyDelegateOptions(const OperationMode operation_mode, const int node_index,
 		const int bit_position, const int number_flips, const int dataset_size, const std::string layer_name)
 		: operation_mode(operation_mode),

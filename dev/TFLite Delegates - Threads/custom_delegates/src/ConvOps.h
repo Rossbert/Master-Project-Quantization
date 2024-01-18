@@ -353,17 +353,6 @@ namespace tflite {
 							// 32 for first layer
 							for (int out_channel = 0; out_channel < output_depth; ++out_channel) 
 							{
-								//// Generate the flips
-								//actual_out_position = batch * output_height * output_width * output_depth + out_y * output_width * output_depth + out_x * output_depth + out_channel;
-								//// This will be deleted later
-								//if (random_out_position == actual_out_position && to_flip)
-								//{
-								//	// Do the flipping here 
-								//	flip_counter++;
-								//	std::cout << "Affected position: batch=" << batch << " y=" << out_y << " x=" << out_x << " channel=" << out_channel << std::endl;
-								//}
-								//// end
-
 								// Will always be 0!!!!!!! input channels = filter input channels then filters per group = number of filters (output channels) so group = 0
 								auto group = out_channel / filters_per_group;
 
@@ -527,8 +516,12 @@ namespace tflite {
 				//if (x == 0)
 				//	x++;
 
+
+				// idx should be taken into account when threading
+				// Consider sending the indexes required from the required set
 				int idx = options.indexes.size() - 1;
 				// Because of threads this should be incorporated in the positions of the batches
+				// Always 0!?? Each image is sent automatically as separate things to the NN
 				static int dataset_index = 0;
 				//std::cout << "dataset_index " << dataset_index << "\n";
 
@@ -546,38 +539,96 @@ namespace tflite {
 				//}
 				//std::cout << "\n";
 
-				// 1 For some reason tensor allocate only allows 1 image to be analyzed
+				// Constants
+				const int outHeightConstant = output_width * output_depth;
+				const int outBatchConstant = output_height * outHeightConstant;
+				const int inputHeightConstant = input_width * input_depth;
+				const int inputBatchConstant = input_height * inputHeightConstant;
+				const int filterHeightConstant = filter_width * filter_input_depth;
+				const int outChannelConstant = filter_height * filterHeightConstant;
+
+				// Accumulator version
+				// Ease number of ouput multiplications
+				int outBatchAccumulator = 0;
+				int inputBatchAccumulator = 0;
+				int outHeightAccumulator;
+				int outWidthAccumulator;
+				int outChannelAccumulator;
+				int outputPosition;
+				int filterHeightAccumulator;
+				int filterWidthAccumulator;
+				int kernelPartialPosition;
+				int inputPosition;
+				int filterPosition;
+				int outputPositionNew = 0;
+
+				// For each element in the dataset
+				// options.errorPositions.size() == 10000 
+				//std::cout << "error positions " << options.errorPositions.size() << "\n";
+				//std::cout << "error positions first element " << options.errorPositions[0].size() << "\n";
+				//std::cout << "indexes " << options.indexes.size() << "\n";
+
+				// Every time tflite is called only one image is fed
 				for (int batch = 0; batch < batches; ++batch)
 				{
-					//// For each batch in the set make at least 1 flip
-					//random_out_position = out_dist(random_dev);
-					//std::cout << "Event position " << random_out_position << std::endl;
-					//// end
+					// Ease number of ouput multiplications
+					// Convert to accumulator instead of multiplication
+					// Accumulator should be updated at the end of the loop because of the index starting in 0!
+					//int outBatchAccumulator = batch * outBatchConstant;
+					
+					// Ease number of input multiplications
+					// Convert to accumulator instead of multiplication
+					// Accumulator should be updated at the end of the loop because of the index starting in 0!
+					//int inputBatchAccumulator = batch * inputBatchConstant;
+
+					// Accumulator version
+					// Ease number of ouput multiplications
+					outHeightAccumulator = 0;
 
 					// 24 for first layer
 					for (int out_y = 0; out_y < output_height; ++out_y)
 					{
+						// Ease number of output multiplications
+						// Convert to accumulator instead of multiplication
+						// Accumulator should be updated at the end of the loop because of the index starting in 0!
+						//int outHeightAccumulator = out_y * outHeightConstant;
+
+						// Accumulator version
+						// Ease number of ouput multiplications
+						outWidthAccumulator = 0;
+						
+						// It can be negative
 						const int in_y_origin = (out_y * stride_height) - pad_height;
+
 						// 24 for first layer
 						for (int out_x = 0; out_x < output_width; ++out_x)
 						{
+							// Ease number of output multiplications
+							// Convert to accumulator instead of multiplication
+							// Accumulator should be updated at the end of the loop because of the index starting in 0!
+							//int outWidthAccumulator = out_x * output_depth;
+							
+							// It can be negative
 							const int in_x_origin = (out_x * stride_width) - pad_width;
+
+							// Accumulator version
+							// Careful with this one in the threaded version
+							// Ease number of filter multiplications
+							outChannelAccumulator = 0;
+
 							// 32 for first layer
 							//for (int out_channel = start; out_channel < end; ++out_channel)
 							for (int out_channel = 0; out_channel < output_depth; ++out_channel)
 							{
-								//// Generate the flips
-								//actual_out_position = batch * output_height * output_width * output_depth + out_y * output_width * output_depth + out_x * output_depth + out_channel;
-								//// This will be deleted later
-								//if (random_out_position == actual_out_position && to_flip)
-								//{
-								//	// Do the flipping here 
-								//	flip_counter++;
-								//	std::cout << "Affected position: batch=" << batch << " y=" << out_y << " x=" << out_x << " channel=" << out_channel << std::endl;
-								//}
-								//// end
-
-								int outputPosition = batch * output_height * output_width * output_depth + out_y * output_width * output_depth + out_x * output_depth + out_channel;
+								// Original formula should be converted in accumulator version instead of multiplications
+								// Accumulator should be updated at the end of the loop because of the index starting in 0!
+								//int outputPosition = batch * output_height * output_width * output_depth + out_y * output_width * output_depth + out_x * output_depth + out_channel;
+								outputPosition = outBatchAccumulator + outHeightAccumulator + outWidthAccumulator + out_channel;
+								outputPositionNew += out_channel;
+								// Ease number of filter multiplications
+								// Convert to accumulator instead of multiplication
+								// Accumulator should be updated at the end of the loop because of the index starting in 0!
+								//int outChannelAccumulator = out_channel * outChannelConstant;
 
 								// Will always be 0!!!!!!! input channels = filter input channels then filters per group = number of filters (output channels) so group = 0
 								auto group = out_channel / filters_per_group;
@@ -589,13 +640,44 @@ namespace tflite {
 								//std::cout << "out_channel value: " << out_channel << "\n";
 								//std::cout << "Group value: " << group << "\n";
 
+								// Accumulator version
+								// Ease number of filter multiplications
+								filterHeightAccumulator = 0;
+
 								int32_t acc = 0;
 								for (int filter_y = 0; filter_y < filter_height; ++filter_y)
 								{
+									// Ease number of filter multiplications
+									// Convert to accumulator instead of multiplication
+									// Accumulator should be updated at the end of the loop because of the index starting in 0!
+									//int filterHeightAccumulator = filter_y * filterHeightConstant;
+
+									// It can be negative
 									const int in_y = in_y_origin + dilation_height_factor * filter_y;
+
+									// Ease number of input multiplications
+									// Convert to accumulator instead of multiplication
+									// Accumulator should be updated at the end of the loop because of the index starting in 0!
+									int inputHeightAccumulator = in_y * inputHeightConstant;
+
+									// Accumulator version
+									// Ease number of filter multiplications
+									filterWidthAccumulator = 0;
+
 									for (int filter_x = 0; filter_x < filter_width; ++filter_x)
 									{
+										// Ease number of filter multiplications
+										// Convert to accumulator instead of multiplication
+										// Accumulator should be updated at the end of the loop because of the index starting in 0!
+										//int filterWidthAccumulator = filter_x * filter_input_depth;
+										
+										// It can be negative
 										const int in_x = in_x_origin + dilation_width_factor * filter_x;
+
+										// Ease number of input multiplications
+										// Convert to accumulator instead of multiplication
+										// Accumulator should be updated at the end of the loop because of the index starting in 0!
+										int inputWidthAccumulator = in_x * input_depth;
 
 										// Zero padding by omitting the areas outside the image.
 										const bool is_point_inside_image =
@@ -609,12 +691,17 @@ namespace tflite {
 
 										for (int in_channel = 0; in_channel < filter_input_depth; ++in_channel)
 										{
-											int kernelPartialPosition = filter_y * filter_width * filter_input_depth + filter_x * filter_input_depth + in_channel;
+											kernelPartialPosition = filterHeightAccumulator + filterWidthAccumulator + in_channel;
 
-											int32_t input_val = input_data[Offset(input_shape, batch, in_y, in_x, in_channel + group * filter_input_depth)];
-											int32_t filter_val = filter_data[Offset(filter_shape, out_channel, filter_y, filter_x, in_channel)];
+											//const int inputPosition = batch * input_height * input_width * input_depth + in_y * input_width * input_depth + in_x * input_depth + in_channel + group * filter_input_depth;
+											//const int inputPosition = ((batch * input_height + in_y) * input_width + in_x) * input_depth + in_channel;
+											inputPosition = inputBatchAccumulator + inputHeightAccumulator + inputWidthAccumulator + in_channel + group * filter_input_depth;
 
-											int32_t result = filter_val * (input_val + input_offset);
+											//const int filterPosition = out_channel * filter_height * filter_width * filter_input_depth + filter_y * filter_width * filter_input_depth + filter_x * filter_input_depth + in_channel;
+											//const int filterPosition = ((out_channel * filter_height + filter_y) * filter_width + filter_x) * filter_input_depth + in_channel;
+											filterPosition = outChannelAccumulator + filterHeightAccumulator + filterWidthAccumulator + in_channel;
+
+											int32_t result = filter_data[filterPosition] * (input_data[inputPosition] + input_offset);
 
 											if (idx >= 0 && options.errorPositions[dataset_index][options.indexes[idx]].first == outputPosition && options.errorPositions[dataset_index][options.indexes[idx]].second == kernelPartialPosition)
 											{
@@ -646,7 +733,13 @@ namespace tflite {
 											// accumulator depth is smaller than 2^16.
 											acc += result;
 										}
+
+										// Accumulation operation!!!!!!!
+										filterWidthAccumulator += filter_input_depth;
 									}
+
+									// Accumulation operation!!!!!!!
+									filterHeightAccumulator += filterHeightConstant;
 								}
 								////
 								//index_value++;
@@ -661,10 +754,23 @@ namespace tflite {
 								acc += output_offset;
 								acc = std::max(acc, output_activation_min);
 								acc = std::min(acc, output_activation_max);
-								output_data[Offset(output_shape, batch, out_y, out_x, out_channel)] = static_cast<int8_t>(acc);
+								output_data[outputPosition] = static_cast<int8_t>(acc);
+							
+								// Accumulation operation!!!!!!!
+								outChannelAccumulator += outChannelConstant;
 							}
+
+							// Accumulation operation!!!!!!!
+							outWidthAccumulator += output_depth;
 						}
+
+						// Accumulation operation!!!!!!!
+						outHeightAccumulator += outHeightConstant;
 					}
+				
+					// Accumulation operation!!!!!!!
+					outBatchAccumulator += outBatchConstant;
+					inputBatchAccumulator += inputBatchConstant;
 				}
 				dataset_index++;
 			}
@@ -674,7 +780,7 @@ namespace tflite {
 		// Other operations
 
 		// Extract the number of total elements inside a TfLiteIntArray
-		int size_extraction(const TfLiteIntArray* dimensions);
+		int size_extraction(const TfLiteIntArray* const dimensions);
 
 		// Extract the number of total elements inside a TfLiteIntArray
 		int size_extraction(const TfLiteIntArray* dimensions, const int starting_index);
