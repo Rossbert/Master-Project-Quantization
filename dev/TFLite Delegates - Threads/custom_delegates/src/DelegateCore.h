@@ -47,7 +47,7 @@ namespace tflite {
 		// Holds the indices of the input/output tensors.
 		// inputs_[i] is a vector of all indexes of the input tensors for the context for node i.
 		// outputs_[i] is a vector of all indexes of the output tensors for the context for node i.
-		// inputs_, outputs_ have a size of number-of-nodes-to-replace
+		// inputs_, outputs_ must have a size of number-of-nodes-to-replace
 		std::vector<std::vector<int>> inputs_, outputs_;
 		
 		// Holds the builtin code of the ops.
@@ -74,6 +74,22 @@ namespace tflite {
 
 		// Steals the Convolution Parameters from the to-be-replaced node
 		void GetConvParams(const TfLiteConvParams&);
+
+		// Adapt this function for the other code
+		inline void getIndexes(int start, int end, const std::vector<std::pair<std::vector<int>, std::vector<int>>>& realPositions, std::vector<int>& indexes)
+		{
+			indexes.clear();
+			for (int i = 0; i < realPositions.size(); i++)
+			{
+				// We are checking the channel of the channel output of the first position 
+				const int& output_channel = realPositions[i].first.back();
+				// Does not include end
+				if (output_channel >= start && output_channel < end)
+				{
+					indexes.push_back(i);
+				}
+			}
+		}
 
 	};
 

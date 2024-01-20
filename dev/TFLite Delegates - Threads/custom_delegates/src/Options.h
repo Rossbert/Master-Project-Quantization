@@ -26,19 +26,31 @@ namespace tflite {
 		int dataset_size = 0;
 		std::string layer_name = "";
 		
-		//std::vector<int> errorWeightPositions;
-		
 		// Filled during MyDelegateKernel::Init
 		std::vector<int> input_size;
 		std::vector<int> kernel_size;
 		std::vector<int> output_size;
 
-		std::vector<int> indexes;
+		// Number of threads for all processes
+		int num_threads = 4;
 
-		// Filled during MyDelegateKernel::Init??
+		// Number of channels of kernel filter to distribute to make use of threads
+		int channels;
+
+		// Size of the chunk of data of indexes to distribute to make use of threads
+		int chunk_size;
+
+		/// <summary>
+		/// Holds the indexes sectioned according to the real positions
+		/// </summary>
+		std::vector<std::vector<std::vector<int>>> chunks_indexes;
+
+		std::vector<int> full_indexes;
+
+		// Convert to vector to accept more than one node
 		std::vector<std::vector<std::pair<int, int>>> errorPositions;
 
-		// Filled during MyDelegateKernel::Init??
+		// Convert to vector to accept more than one node
 		// They are needed to discriminate the channels for threads
 		std::vector<std::vector<std::pair<std::vector<int>, std::vector<int>>>> realPositions;
 

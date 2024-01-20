@@ -15,6 +15,7 @@ namespace tflite {
 		// Copy constructor
 		errorPositions.resize(dataset_size);
 		realPositions.resize(dataset_size);
+		chunks_indexes.resize(dataset_size);
 	}
 	MyDelegateOptions::MyDelegateOptions(const OperationMode operation_mode, const int node_index,
 		const int bit_position, const int number_flips, const int dataset_size, const std::string layer_name)
@@ -28,6 +29,7 @@ namespace tflite {
 		// Creates new seed for the generator
 		errorPositions.resize(dataset_size);
 		realPositions.resize(dataset_size);
+		chunks_indexes.resize(dataset_size);
 	}
 
 	MyDelegateOptions::MyDelegateOptions(char** options_keys, char** options_values, size_t num_options)
@@ -69,6 +71,7 @@ namespace tflite {
 
 		errorPositions.resize(dataset_size);
 		realPositions.resize(dataset_size);
+		chunks_indexes.resize(dataset_size);
 	}
 	
 	void MyDelegateOptions::convertPosition(int position, int max_size, const std::vector<int>& tensor_size, std::vector<int>& position_values)

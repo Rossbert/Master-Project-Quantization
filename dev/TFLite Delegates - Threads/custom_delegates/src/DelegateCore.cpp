@@ -133,9 +133,10 @@ namespace tflite {
 			const int& input_height = options_.input_size[1];
 			const int& input_width = options_.input_size[2];
 
-			// Get partial sizes
+			// Get partial sizes, first element of the kernel size is not needed
 			std::vector<int> kernel_partial_size_values(options_.kernel_size.begin() + 1, options_.kernel_size.end());
 			// Put everything that follows on a loop to generate the whole dataset random positions beforehand
+			// For MNIST Fashion options_.dataset_size = 10000
 			for (int j = 0; j < options_.dataset_size; j++)
 			{
 				// MUST BE RESERVE not RESIZE
@@ -163,6 +164,8 @@ namespace tflite {
 					{
 						// This has to be done in a do while loop, to make certain it is inside the input
 						kernel_values.clear();
+						// Push the last element of out position = channels
+						// It is the first element of the kernel position
 						kernel_values.push_back(out_values.back());
 
 						// Generating the random number
@@ -191,38 +194,96 @@ namespace tflite {
 				}
 				std::sort(options_.errorPositions[j].begin(), options_.errorPositions[j].end(), [this](const std::pair<int, int>& pair1, const std::pair<int, int>& pair2) { return options_.pair_greater(pair1, pair2); });
 				std::sort(options_.realPositions[j].begin(), options_.realPositions[j].end(), [this](const std::pair<std::vector<int>, std::vector<int>>& pair1, const std::pair<std::vector<int>, std::vector<int>>& pair2) { return options_.pair_vectors_greater(pair1, pair2, options_.output_size); });
-			
+
+				// Here organize the indexes of the chunks of the channels
+				options_.full_indexes.resize(options_.number_flips);
+				// Fill values with increasing order from 0 to size of indexes
+				std::iota(options_.full_indexes.begin(), options_.full_indexes.end(), 0);
+
+				options_.channels = options_.kernel_size[0];
+				options_.num_threads = std::min(options_.num_threads, options_.channels); // Ensuring the number of threads doesn't exceed the number of rows
+				options_.chunk_size = options_.channels / options_.num_threads;
+
+				std::vector<int> chunk_indexes;
+
+				for (int k = 0; k < options_.num_threads; ++k)
+				{
+					const int start = k * options_.chunk_size;
+					const int end = std::min(start + options_.chunk_size, options_.channels);
+					getIndexes(start, end, options_.realPositions[j], chunk_indexes);
+
+					//std::cout << "Start: " << start << " End: " << end << "\n";
+					//std::cout << "Indexes in chunk " << k << ": ";
+					//for (const auto& val : chunk_indexes)
+					//{
+					//	std::cout << val << " ";
+					//}
+					//std::cout << "\n";
+
+					options_.chunks_indexes[j].emplace_back(chunk_indexes);
+				}
+
+				//std::cout << "Real positions\n";
+				//for (const auto& val : options_.realPositions[j])
+				//{
+				//	for (const int& element : val.first)
+				//	{
+				//		std::cout << element << " ";
+				//	}
+				//	std::cout << "- ";
+				//	for (const int& element : val.second)
+				//	{
+				//		std::cout << element << " ";
+				//	}
+				//	std::cout << "\n";
+				//}
+				//std::cout << "\n";
+				//std::cout << "item " << j << "\n";
+				//for (int k = 0; k < options_.chunks_indexes[j].size(); k++)
+				//{
+				//	std::cout << "Chunk " << k << "\n";
+				//	for (const auto& val : options_.chunks_indexes[j][k])
+				//	{
+				//		std::cout << val << " ";
+				//	}
+				//	std::cout << "\n";
+				//}
+				//std::cout << "\n";
+
 #if LOGGER
-			//std::cout << "Error positions\n";
-			//for (const auto& val : options_.errorPositions[j])
-			//{
-			//	std::cout << val.first << " - " << val.second << "\n";
-			//}
-			//std::cout << "\n";
-			//std::cout << "Real positions\n";
-			//for (const auto& val : options_.realPositions[j])
-			//{
-			//	for (const int& element : val.first)
-			//	{
-			//		std::cout << element << " ";
-			//	}
-			//	std::cout << "- ";
-			//	for (const int& element : val.second)
-			//	{
-			//		std::cout << element << " ";
-			//	}
-			//	std::cout << "\n";
-			//}
-			//std::cout << "\n";
+				//std::cout << "Error positions\n";
+				//for (const auto& val : options_.errorPositions[j])
+				//{
+				//	std::cout << val.first << " - " << val.second << "\n";
+				//}
+				//std::cout << "\n";
+				//std::cout << "Real positions\n";
+				//for (const auto& val : options_.realPositions[j])
+				//{
+				//	for (const int& element : val.first)
+				//	{
+				//		std::cout << element << " ";
+				//	}
+				//	std::cout << "- ";
+				//	for (const int& element : val.second)
+				//	{
+				//		std::cout << element << " ";
+				//	}
+				//	std::cout << "\n";
+				//}
+				//std::cout << "\n";
 
 #endif // LOGGER
 			
 			}
 
-			options_.indexes.resize(options_.number_flips);
-			std::iota(options_.indexes.begin(), options_.indexes.end(), 0);
-
 #if LOGGER
+			//std::cout << "Indexes values: ";
+			//for (const auto& val : options_.indexes)
+			//{
+			//	std::cout << val << " ";
+			//}
+			//std::cout << "\n";
 			//std::cout << "Special logging! To be delegated node index: " << node_index << std::endl;
 			////custom_logger::LogTfLiteContext(context);
 			//custom_logger::LogTfLiteRegistration(delegated_node_registration);

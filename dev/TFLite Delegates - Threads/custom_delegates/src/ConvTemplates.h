@@ -177,6 +177,7 @@ namespace tflite {
                             GetTensorShape(bias), GetTensorData<int32>(bias),
                             GetTensorShape(output), GetTensorData<int8>(output), 
                             options);
+
                         break;
                     }
 
