@@ -39,10 +39,10 @@ namespace tflite {
 		// Save index to all nodes which are part of this delegate.
 		// Inputs and outputs are vectors of vectors
 		// input shape is number_nodes x number of inputs per node 
+		//inputs_.resize(params->nodes_to_replace->size);
 		// output shape is number_nodes x number of outputs per node 
-		inputs_.resize(params->nodes_to_replace->size);
-		outputs_.resize(params->nodes_to_replace->size);
-		builtin_code_.resize(params->nodes_to_replace->size);
+		//outputs_.resize(params->nodes_to_replace->size);
+		
 		// Stores the Convolution Operation Options
 		// can add more options later
 		// Heap allocated, should be freed in the destructor
@@ -67,45 +67,44 @@ namespace tflite {
 			int output_index = 0;
 			for (int j = 0; j < delegated_node->inputs->size; j++)
 			{
-				inputs_[i].push_back(delegated_node->inputs->data[j]);
+				//inputs_[i].push_back(delegated_node->inputs->data[j]);
 				custom_ops::conv::GetTensorIndexes(context, delegated_node, &bias_index, &filter_index, &input_index);
 				
 			}
-			for (int j = 0; j < delegated_node->outputs->size; j++)
-			{
-				outputs_[i].push_back(delegated_node->outputs->data[j]);
-			}
+			//for (int j = 0; j < delegated_node->outputs->size; j++)
+			//{
+			//	outputs_[i].push_back(delegated_node->outputs->data[j]);
+			//}
 
 			const auto& input_tensor = context->tensors[delegated_node->inputs->data[input_index]];
 			const auto& filter_tensor = context->tensors[delegated_node->inputs->data[filter_index]];
 			const auto& output_tensor = context->tensors[delegated_node->outputs->data[output_index]];
-			// In the future options_ will be a vector
-			//std::cout << "Input size\n";
+			
+			std::cout << "Input size\n";
 			for (int k = 0; k < input_tensor.dims->size; k++)
 			{
 				options_.input_size.push_back(input_tensor.dims->data[k]);
-				//std::cout << options_.input_size.back() << " ";
+				std::cout << options_.input_size.back() << " ";
 			}
-			//std::cout << "\n";
-			//std::cout << "Filter size\n";
+			std::cout << "\n";
+			std::cout << "Filter size\n";
 			for (int k = 0; k < filter_tensor.dims->size; k++)
 			{
 				options_.kernel_size.push_back(filter_tensor.dims->data[k]);
-				//std::cout << options_.kernel_size.back() << " ";
+				std::cout << options_.kernel_size.back() << " ";
 			}
-			//std::cout << "\n";
-			//std::cout << "Output size\n";
+			std::cout << "\n";
+			std::cout << "Output size\n";
 			for (int k = 0; k < output_tensor.dims->size; k++)
 			{
 				options_.output_size.push_back(output_tensor.dims->data[k]);
-				//std::cout << options_.output_size.back() << " ";
+				std::cout << options_.output_size.back() << " ";
 			}
-			//std::cout << "\n";
-
-			builtin_code_[i] = delegated_node_registration->builtin_code;
+			std::cout << "\n";
 
 			// Modify this to accept more than 1 node
 			// For the moment it only stores 1 node's information
+			// This operation fails for dense layer!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 			GetOperationData(*reinterpret_cast<custom_ops::conv::OpData*>(delegated_node->user_data));
 			GetConvParams(*reinterpret_cast<TfLiteConvParams*>(delegated_node->builtin_data));
 
@@ -423,12 +422,26 @@ namespace tflite {
 		conv_params_->dilation_height_factor = params.dilation_height_factor;
 		conv_params_->quantized_bias_type = params.quantized_bias_type;
 	}
-	
+	void MyDelegateKernel::getIndexes(int start, int end, const std::vector<std::pair<std::vector<int>, std::vector<int>>>& realPositions, std::vector<int>& indexes)
+	{
+		indexes.clear();
+		for (int i = 0; i < realPositions.size(); i++)
+		{
+			// We are checking the channel of the channel output of the first position 
+			const int& output_channel = realPositions[i].first.back();
+			// Range does not include end
+			if (output_channel >= start && output_channel < end)
+			{
+				indexes.push_back(i);
+			}
+		}
+	}
+
 	// MyDelegate Methods
 
 	MyDelegate::MyDelegate()
 	{
-		// This calls the default constructor off options_ (MyDelegateOptions)
+		// This calls the default constructor of options_ (MyDelegateOptions)
 	}
 	MyDelegate::MyDelegate(const MyDelegateOptions& options)
 		: options_(options)
@@ -439,12 +452,14 @@ namespace tflite {
 	{
 
 	}
-	bool MyDelegate::IsNodeSupportedByDelegate(const TfLiteRegistration* registration,
-		const TfLiteNode* node, TfLiteContext* context) const
+	bool MyDelegate::IsNodeSupportedByDelegate(const TfLiteRegistration* registration, const TfLiteNode* node, TfLiteContext* context) const
 	{
 		// Checking the TfLiteRegistration
 		// Only supports 2D convolution operations.
-		if (kTfLiteBuiltinConv2d != registration->builtin_code)
+#if LOGGER
+		//std::cout << "Registration type: " << custom_logger::get_builtin_code(registration->builtin_code) << "\n";
+#endif // LOGGER
+		if (registration->builtin_code != kTfLiteBuiltinConv2d && registration->builtin_code != kTfLiteBuiltinFullyConnected)
 			return false;
 		
 		// Checking the TfLiteNode inputs type
@@ -474,8 +489,14 @@ namespace tflite {
 		// bias index = 2
 		// Checking the TfLiteTensor and TfLiteNode name
 		// For a normal node the kernel index is always 1, in the inputs
+		// By this function the context and node are not disturbed... as in the function MyDelegateKernel::Prepare
 		auto& kernel_tensor = context->tensors[node->inputs->data[1]];
+
 		// Looking by name, if layer is not named, logic should be changed
+#if LOGGER
+		std::cout << "Kernel tensor name: " << kernel_tensor.name << "\n";
+#endif // LOGGER
+		// By this criteria only one node will be accepted!
 		if (strstr(kernel_tensor.name, options_.layer_name.c_str()) == nullptr)
 			return false;
 		

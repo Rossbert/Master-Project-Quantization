@@ -2,14 +2,14 @@
 
 namespace tflite {
 
-	// MyDelegateOptionsMethods
-
 	MyDelegateOptions::MyDelegateOptions(const MyDelegateOptions& options)
 		: operation_mode(options.operation_mode),
 		node_index(options.node_index),
 		bit_position(options.bit_position),
 		number_flips(options.number_flips),
 		dataset_size(options.dataset_size),
+		channels(options.channels),
+		chunk_size(options.chunk_size),
 		layer_name(options.layer_name)
 	{
 		// Copy constructor
@@ -17,13 +17,17 @@ namespace tflite {
 		realPositions.resize(dataset_size);
 		chunks_indexes.resize(dataset_size);
 	}
+
 	MyDelegateOptions::MyDelegateOptions(const OperationMode operation_mode, const int node_index,
-		const int bit_position, const int number_flips, const int dataset_size, const std::string layer_name)
+		const int bit_position, const int number_flips, const int dataset_size, const int channels, 
+		const int chunk_size, const std::string layer_name)
 		: operation_mode(operation_mode),
 		node_index(node_index),
 		bit_position(bit_position),
 		number_flips(number_flips),
 		dataset_size(dataset_size),
+		channels(channels),
+		chunk_size(chunk_size),
 		layer_name(layer_name)
 	{
 		// Creates new seed for the generator

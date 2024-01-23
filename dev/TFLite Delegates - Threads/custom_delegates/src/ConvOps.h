@@ -17,15 +17,6 @@
 // Necessary for convolutional reference operations
 // For Int8 operations
 #include <tensorflow/lite/kernels/internal/reference/integer_ops/conv.h>
-// For Uint8 operations
-#include <tensorflow/lite/kernels/internal/reference/conv.h>
-// For int4 operations and also hybrid operations
-#include <tensorflow/lite/kernels/internal/portable_tensor_utils.h>
-// For flost32 hybrid operations
-// Though it appears only the ScopeLabel class is used
-// To access the location of the header file C:\Users\rosal\tensorflow source\tflite_c_build\ruy
-// Go to ConvTemplates.h to locate the code
-//#include <ruy/profiler/instrumentation.h>
 
 #include "Options.h"
 
@@ -155,9 +146,6 @@ namespace tflite {
 			// Frees the memory of the OpData created in init
 			void Free(TfLiteContext* context, void* buffer);
 			
-			// Naive implementation of transpose for floats. Could be optimized later.
-			void TransposeFloatTensor(const TfLiteTensor* input, TfLiteTensor* output);
-			
 			// Gets the input, filter, and output indexes if the order of tensor inputs is mixed
 			void GetTensorIndexes(TfLiteContext* context, TfLiteNode* node,
 				int* bias_index, int* filter_index, int* input_index);
@@ -191,54 +179,12 @@ namespace tflite {
 
 			// Templated function based on the function of the same name on conv.cc
 			template <KernelType kernel_type>
-			void EvalQuantized(TfLiteContext* context, TfLiteNode* node,
-				TfLiteConvParams* params, OpData* data,
-				const TfLiteTensor* input, const TfLiteTensor* filter,
-				const TfLiteTensor* bias, TfLiteTensor* im2col,
-				TfLiteTensor* output);
-
-			// Templated function based on the function of the same name on conv.cc
-			template <KernelType kernel_type>
 			void EvalQuantizedPerChannel(TfLiteContext* context, TfLiteNode* node,
 				TfLiteConvParams* params, OpData* data,
 				const TfLiteTensor* input,
 				const TfLiteTensor* filter,
 				const TfLiteTensor* bias, TfLiteTensor* output,
 				TfLiteTensor* im2col, const MyDelegateOptions& options);
-
-			// Templated function based on the function of the same name on conv.cc
-			template <KernelType kernel_type>
-			void EvalQuantizedPerChannel16x8(TfLiteContext* context, TfLiteNode* node,
-				TfLiteConvParams* params, OpData* data,
-				const TfLiteTensor* input,
-				const TfLiteTensor* filter,
-				const TfLiteTensor* bias, TfLiteTensor* output,
-				TfLiteTensor* im2col);
-
-			// Templated function based on the function of the same name on conv.cc
-			template <KernelType kernel_type>
-			void EvalFloat(TfLiteContext* context, TfLiteNode* node,
-				TfLiteConvParams* params, OpData* data,
-				const TfLiteTensor* input, const TfLiteTensor* filter,
-				const TfLiteTensor* bias, TfLiteTensor* im2col,
-				TfLiteTensor* hwcn_weights, TfLiteTensor* output);
-
-			// Templated function based on the function of the same name on conv.cc
-			template <KernelType kernel_type>
-			TfLiteStatus EvalHybridPerChannel(TfLiteContext* context, TfLiteNode* node,
-				TfLiteConvParams* params, OpData* data,
-				const TfLiteTensor* input,
-				const TfLiteTensor* filter,
-				const TfLiteTensor* bias,
-				TfLiteTensor* im2col, TfLiteTensor* output);
-
-			// Templated function based on the function of the same name on conv.cc
-			template <KernelType kernel_type>
-			TfLiteStatus EvalHybrid(TfLiteContext* context, TfLiteNode* node,
-				TfLiteConvParams* params, OpData* data,
-				const TfLiteTensor* input, const TfLiteTensor* filter,
-				const TfLiteTensor* bias, TfLiteTensor* im2col,
-				TfLiteTensor* accum_scratch, TfLiteTensor* output);
 
 			// Templated function based on the function of the same name on conv.cc
 			template <KernelType kernel_type, TfLiteType input_type>
@@ -268,19 +214,6 @@ namespace tflite {
 				const int pad_width = params.padding_values.width;
 				const int pad_height = params.padding_values.height;
 				const int32_t output_offset = params.output_offset;
-
-				////
-				////
-				//std::cout << "Input offset " << input_offset << std::endl;
-				//std::cout << "stride_width " << stride_width << std::endl;
-				//std::cout << "stride_height " << stride_height << std::endl;
-				//std::cout << "dilation_width_factor " << dilation_width_factor << std::endl;
-				//std::cout << "dilation_height_factor " << dilation_height_factor << std::endl;
-				//std::cout << "pad_width " << pad_width << std::endl;
-				//std::cout << "pad_height " << pad_height << std::endl;
-				//std::cout << "output_offset " << output_offset << std::endl;
-				////
-				////
 
 				// Set min and max value of the output.
 				const int32_t output_activation_min = params.quantized_activation_min;
@@ -313,35 +246,9 @@ namespace tflite {
 				const int output_height = output_shape.Dims(1);
 				const int output_width = output_shape.Dims(2);
 
-				//bool to_flip = false;
-				//if (options.operation_mode == OperationMode::convolution && options.number_flips > 0)
-				//{
-				//	to_flip = true;
-				//}
-				//int random_out_position, actual_out_position;
-				//int out_size = output_height * output_width * output_depth;
-				//int filter_size = filter_height * filter_width * input_depth;
-				//std::random_device random_dev;
-				//std::uniform_int_distribution<int> out_dist(0, out_size - 1);
-				//static bool flag = false;
-				//static int flip_counter = 1;
-				//if (!flag)
-				//{
-				//	std::cout << "Limits per batch " << output_height << " - " << output_width << " - " << output_depth << std::endl;
-				//	flag = true;
-				//}
-
-				//int index_value = 0;
-				//std::cout << "Counter " << flip_counter << std::endl;
-				// 
 				// 1 For some reason tensor allocate only allows 1 image to be analyzed
 				for (int batch = 0; batch < batches; ++batch) 
 				{
-					//// For each batch in the set make at least 1 flip
-					//random_out_position = out_dist(random_dev);
-					//std::cout << "Event position " << random_out_position << std::endl;
-					//// end
-
 					// 24 for first layer
 					for (int out_y = 0; out_y < output_height; ++out_y) 
 					{
@@ -353,26 +260,8 @@ namespace tflite {
 							// 32 for first layer
 							for (int out_channel = 0; out_channel < output_depth; ++out_channel) 
 							{
-								//// Generate the flips
-								//actual_out_position = batch * output_height * output_width * output_depth + out_y * output_width * output_depth + out_x * output_depth + out_channel;
-								//// This will be deleted later
-								//if (random_out_position == actual_out_position && to_flip)
-								//{
-								//	// Do the flipping here 
-								//	flip_counter++;
-								//	std::cout << "Affected position: batch=" << batch << " y=" << out_y << " x=" << out_x << " channel=" << out_channel << std::endl;
-								//}
-								//// end
-
 								// Will always be 0!!!!!!! input channels = filter input channels then filters per group = number of filters (output channels) so group = 0
 								auto group = out_channel / filters_per_group;
-
-								//std::cout << "Groups value: " << groups << "\n";
-								//std::cout << "filter_input_depth value: " << filter_input_depth << "\n";
-								//std::cout << "filters_per_group value: " << filters_per_group << "\n";
-								//std::cout << "output_depth value: " << output_depth << "\n";
-								//std::cout << "out_channel value: " << out_channel << "\n";
-								//std::cout << "Group value: " << group << "\n";
 
 								int32_t acc = 0;
 								for (int filter_y = 0; filter_y < filter_height; ++filter_y) 
@@ -416,9 +305,6 @@ namespace tflite {
 										}
 									}
 								}
-								////
-								//index_value++;
-								//// end
 
 								// Here is the point where the previous python flipper version carried the bit flipping
 								if (bias_data) 
@@ -434,7 +320,6 @@ namespace tflite {
 						}
 					}
 				}
-				//std::cout << "Number of operations " << index_value << std::endl;
 			}
 
 			// Raw operation to pararellize in threads
@@ -660,22 +545,6 @@ namespace tflite {
 				}
 			}
 
-			// Adapt this function for the other code
-			inline void getIndexes(int start, int end, const std::vector<std::pair<std::vector<int>, std::vector<int>>>& realPositions, std::vector<int>& indexes)
-			{
-				indexes.clear();
-				for (int i = 0; i < realPositions.size(); i++)
-				{
-					// We are checking the channel of the channel output of the first position 
-					const int& output_channel = realPositions[i].first.back();
-					// Does not include end
-					if (output_channel >= start && output_channel < end)
-					{
-						indexes.push_back(i);
-					}
-				}
-			}
-
 			inline void ParallelDisturbedConvolution(
 				const int dataset_index,
 				const int32_t* output_multiplier, const int32_t* output_shift,
@@ -775,19 +644,6 @@ namespace tflite {
 				const int pad_height = params.padding_values.height;
 				const int32_t output_offset = params.output_offset;
 
-				////
-				////
-				//std::cout << "Input offset " << input_offset << std::endl;
-				//std::cout << "stride_width " << stride_width << std::endl;
-				//std::cout << "stride_height " << stride_height << std::endl;
-				//std::cout << "dilation_width_factor " << dilation_width_factor << std::endl;
-				//std::cout << "dilation_height_factor " << dilation_height_factor << std::endl;
-				//std::cout << "pad_width " << pad_width << std::endl;
-				//std::cout << "pad_height " << pad_height << std::endl;
-				//std::cout << "output_offset " << output_offset << std::endl;
-				////
-				////
-
 				// Set min and max value of the output.
 				const int32_t output_activation_min = params.quantized_activation_min;
 				const int32_t output_activation_max = params.quantized_activation_max;
@@ -819,49 +675,8 @@ namespace tflite {
 				const int output_height = output_shape.Dims(1);
 				const int output_width = output_shape.Dims(2);
 
-				//bool to_flip = false;
-				//if (options.operation_mode == OperationMode::convolution && options.number_flips > 0)
-				//{
-				//	to_flip = true;
-				//}
-				//int random_out_position, actual_out_position;
-				//int out_size = output_height * output_width * output_depth;
-				//int filter_size = filter_height * filter_width * input_depth;
-				//std::random_device random_dev;
-				//std::uniform_int_distribution<int> out_dist(0, out_size - 1);
-				//static bool flag = false;
-				//static int flip_counter = 1;
-				//if (!flag)
-				//{
-				//	std::cout << "Limits per batch " << output_height << " - " << output_width << " - " << output_depth << std::endl;
-				//	flag = true;
-				//}
-				//int index_value = 0;
-				//std::cout << "Counter " << flip_counter << std::endl;
-
-				//static int x = 0;
-				//if (x == 1)
-				//	return;
-				//if (x == 0)
-				//	x++;
-
 				// Because of threads this should be incorporated in the positions of the batches
 				static int dataset_index = 0;
-				//std::cout << "dataset_index " << dataset_index << "\n";
-
-				//std::cout << "Index " << idx_counter << "\n";
-				//std::cout << "Indexes\n";
-				//for (const auto& val : options.indexes)
-				//{
-				//	std::cout << val << " ";
-				//}
-				//std::cout << "\n";
-				//std::cout << "Error positions\n";
-				//for (const auto& pair : options.errorPositions)
-				//{
-				//	std::cout << pair.first << " " << pair.second << "\n";
-				//}
-				//std::cout << "\n";
 
 				// Parallel computing done here!
 				ParallelDisturbedConvolution(
@@ -923,13 +738,6 @@ namespace tflite {
 								// Will always be 0!!!!!!! input channels = filter input channels then filters per group = number of filters (output channels) so group = 0
 								auto group = out_channel / filters_per_group;
 
-								//std::cout << "Groups value: " << groups << "\n";
-								//std::cout << "filter_input_depth value: " << filter_input_depth << "\n";
-								//std::cout << "filters_per_group value: " << filters_per_group << "\n";
-								//std::cout << "output_depth value: " << output_depth << "\n";
-								//std::cout << "out_channel value: " << out_channel << "\n";
-								//std::cout << "Group value: " << group << "\n";
-
 								int32_t acc = 0;
 								for (int filter_y = 0; filter_y < filter_height; ++filter_y)
 								{
@@ -959,13 +767,9 @@ namespace tflite {
 
 											if (idx_counter >= 0 && options.errorPositions[dataset_index][options.indexes[idx_counter]].first == outputPosition && options.errorPositions[dataset_index][options.indexes[idx_counter]].second == kernelPartialPosition)
 											{
-												//std::cout << "outputPosition: " << outputPosition << "\n";
-												//std::cout << "kernelPartialPosition: " << kernelPartialPosition << "\n";
-												//std::cout << "result before: " << result << "\n";
 												std::bitset<32> bits(result);
 												bits.flip(options.bit_position);
 												result = static_cast<int>(bits.to_ulong());
-												//std::cout << "result after: " << result << "\n";
 												idx_counter--;
 											}
 
@@ -1011,9 +815,6 @@ namespace tflite {
 
 		}
 	
-		// Other operations
-
-
 		// Extract the number of total elements inside a TfLiteIntArray
 		int size_extraction(const TfLiteIntArray* dimensions);
 

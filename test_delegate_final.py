@@ -56,7 +56,7 @@ class OperationMode(IntEnum):
 N_SIMULATIONS = 10
 N_FLIPS_LIMIT = 4
 # Load paths
-LAYER_NAME = "conv2d/"
+LAYER_NAME = "conv2d_2/"
 TFLITE_PATH = "./model/tflite_ep5_2023-07-02_16-50-58.tflite"
 DELEGATE_PATH = "./dependencies/custom_delegates.dll"
 OUTPUTS_DIR = "./outputs/"

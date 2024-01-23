@@ -1,5 +1,6 @@
 #include "Logger.h"
 #include "DelegateCore.h"
+
 namespace tflite {
 	
 	namespace custom_logger {

@@ -1,5 +1,6 @@
 #include "ConvOps.h"
 #include "Logger.h"
+
 namespace tflite {
 
     namespace custom_ops {
@@ -16,22 +17,6 @@ namespace tflite {
             void Free(TfLiteContext* context, void* buffer) 
             {
                 delete reinterpret_cast<OpData*>(buffer);
-            }
-
-            void TransposeFloatTensor(const TfLiteTensor* input, TfLiteTensor* output) 
-            {
-                const int rows = output->dims->data[1];
-                const int cols = output->dims->data[0];
-                const float* input_data = GetTensorData<float>(input);
-                float* output_data = GetTensorData<float>(output);
-                for (int i = 0; i < rows; ++i) 
-                {
-                    for (int j = 0; j < cols; ++j) 
-                    {
-                        const float in_value = input_data[i * cols + j];
-                        output_data[j * rows + i] = in_value;
-                    }
-                }
             }
 
             void GetTensorIndexes(TfLiteContext* context, TfLiteNode* node,
@@ -111,8 +96,6 @@ namespace tflite {
                 TfLiteConvParams* params, OpData* data)
             {
                 // So far for Quantized models and kernel_type = kReference no memory is allocated
-                //auto* params = reinterpret_cast<TfLiteConvParams*>(node->builtin_data);
-                //OpData* data = reinterpret_cast<OpData*>(node->user_data);
                 int bias_index = -1, filter_index = -1, input_index = -1;
                 GetTensorIndexes(context, node, &bias_index, &filter_index, &input_index);
 
@@ -235,8 +218,6 @@ namespace tflite {
             {
                 // This function has been modified to take into account the reordering of the inputs
                 // Indexes are modified to reflect the changed order of inputs
-                //auto* params = reinterpret_cast<TfLiteConvParams*>(node->builtin_data);
-                //OpData* data = reinterpret_cast<OpData*>(node->user_data);
                 bool has_bias = node->inputs->size == 3;
 
                 // Check number of inputs/outputs
@@ -311,44 +292,9 @@ namespace tflite {
                     TF_LITE_ENSURE_EQ(context, NumElements(bias), SizeOfDimension(filter, 0));
                 }
 
-                if (input_type == kTfLiteInt16) 
-                {
-                    // Quantization should be symmetric.
-                    TF_LITE_ENSURE_EQ(context, input->params.zero_point, 0);
-                    TF_LITE_ENSURE_EQ(context, output->params.zero_point, 0);
-
-                    // Check quantized_bias_type is either kTfLiteInt64 or kTfLiteInt32.
-                    if (params->quantized_bias_type != kTfLiteFloat32) {
-                        TF_LITE_ENSURE(context, params->quantized_bias_type == kTfLiteInt32 ||
-                            params->quantized_bias_type == kTfLiteInt64);
-                        TF_LITE_ENSURE(context, (bias == nullptr) ||
-                            bias->type == params->quantized_bias_type);
-                        data->quantized_bias_type = params->quantized_bias_type;
-                    }
-                }
-
                 const bool is_hybrid =
                     (input->type == kTfLiteFloat32 &&
                         (filter->type == kTfLiteUInt8 || filter->type == kTfLiteInt8));
-
-                if (is_hybrid && filter->type == kTfLiteInt8 &&
-                    filter->quantization.type == kTfLiteAffineQuantization &&
-                    filter->quantization.params &&
-                    reinterpret_cast<TfLiteAffineQuantization*>(filter->quantization.params)->scale &&
-                    reinterpret_cast<TfLiteAffineQuantization*>(filter->quantization.params)->scale->size > 1) 
-                {
-                    const auto* affine_quantization =
-                        reinterpret_cast<TfLiteAffineQuantization*>(filter->quantization.params);
-                    const float scale = affine_quantization->scale->data[0];
-                    for (int i = 1; i < affine_quantization->scale->size; i++) 
-                    {
-                        if (affine_quantization->scale->data[i] != scale) 
-                        {
-                            data->is_hybrid_per_channel = true;
-                            break;
-                        }
-                    }
-                }
 
                 // The multi-threaded kernel supports neither dilation nor hybrid kernels, and
                 // is incompatible with mutable input filters that might change between evals.
@@ -476,114 +422,7 @@ namespace tflite {
                     data->have_weights_been_transposed = false;
                 }
 
-                // If the input is float32 and filter is int8
-                if (is_hybrid) 
-                {
-                    node->temporaries->data[data->input_quantized_index] =
-                        data->input_quantized_id;
-                    TfLiteTensor* input_quantized;
-                    TF_LITE_ENSURE_OK(
-                        context, GetTemporarySafe(context, node, data->input_quantized_index,
-                            &input_quantized));
-                    input_quantized->type = kTfLiteInt8;
-                    input_quantized->allocation_type = kTfLiteArenaRw;
-                    if (!TfLiteIntArrayEqual(input_quantized->dims, input->dims)) 
-                    {
-                        TfLiteIntArray* input_quantized_size = TfLiteIntArrayCopy(input->dims);
-                        TF_LITE_ENSURE_OK(context, context->ResizeTensor(context, input_quantized,
-                            input_quantized_size));
-                    }
-
-                    node->temporaries->data[data->scaling_factors_index] =
-                        data->scaling_factors_id;
-                    TfLiteTensor* scaling_factors;
-                    TF_LITE_ENSURE_OK(
-                        context, GetTemporarySafe(context, node, data->scaling_factors_index,
-                            &scaling_factors));
-                    scaling_factors->type = kTfLiteFloat32;
-                    scaling_factors->allocation_type = kTfLiteArenaRw;
-                    // Only one scale factor per batch is typically necessary. See optimized
-                    // implementation for why we need to allocate for the height of the inputs
-                    // flattened to 2D.
-                    TF_LITE_ENSURE(context, channels_in != 0);
-                    const int height = NumElements(input) / channels_in;
-                    int scaling_dims[1] = { height };
-                    if (!TfLiteIntArrayEqualsArray(scaling_factors->dims, 1, scaling_dims)) 
-                    {
-                        TfLiteIntArray* scaling_factors_size = TfLiteIntArrayCreate(1);
-                        scaling_factors_size->data[0] = height;
-                        TF_LITE_ENSURE_OK(context, context->ResizeTensor(context, scaling_factors,
-                            scaling_factors_size));
-                    }
-
-                    node->temporaries->data[data->accum_scratch_index] = data->accum_scratch_id;
-                    TfLiteTensor* accum_scratch;
-                    TF_LITE_ENSURE_OK(context,
-                        GetTemporarySafe(context, node, data->accum_scratch_index,
-                            &accum_scratch));
-                    accum_scratch->type = kTfLiteInt32;
-                    accum_scratch->allocation_type = kTfLiteArenaRw;
-                    const int scratch_width = batches * out_height * out_width;
-                    int accum_scratch_dims[2] = { channels_out, scratch_width };
-                    if (!TfLiteIntArrayEqualsArray(accum_scratch->dims, 2,
-                        accum_scratch_dims)) 
-                    {
-                        TfLiteIntArray* accum_scratch_size = TfLiteIntArrayCreate(2);
-                        accum_scratch_size->data[0] = channels_out;
-                        accum_scratch_size->data[1] = scratch_width;
-                        TF_LITE_ENSURE_OK(context, context->ResizeTensor(context, accum_scratch,
-                            accum_scratch_size));
-                    }
-
-                    if (data->is_hybrid_per_channel) 
-                    {
-                        const auto* affine_quantization =
-                            reinterpret_cast<TfLiteAffineQuantization*>(
-                                filter->quantization.params);
-                        TF_LITE_ENSURE(context, affine_quantization);
-                        TF_LITE_ENSURE(context, affine_quantization->scale);
-                        TF_LITE_ENSURE_EQ(
-                            context, affine_quantization->scale->size,
-                            filter->dims->data[affine_quantization->quantized_dimension]);
-                        node->temporaries->data[data->input_offset_index] = data->input_offset_id;
-                        TfLiteTensor* input_offsets;
-                        TF_LITE_ENSURE_OK(
-                            context, GetTemporarySafe(context, node, data->input_offset_index,
-                                &input_offsets));
-                        input_offsets->type = kTfLiteInt32;
-                        input_offsets->allocation_type = kTfLiteArenaRw;
-                        // See above comment for the need to allocate for height of inputs.
-                        TF_LITE_ENSURE(context, channels_in != 0);
-                        const int height = NumElements(input) / channels_in;
-                        const int input_offset_dims[1] = { height };
-                        if (!TfLiteIntArrayEqualsArray(input_offsets->dims, 1,
-                            input_offset_dims)) 
-                        {
-                            TfLiteIntArray* input_offsets_size = TfLiteIntArrayCreate(1);
-                            input_offsets_size->data[0] = input_offset_dims[0];
-                            TF_LITE_ENSURE_OK(context, context->ResizeTensor(context, input_offsets,
-                                input_offsets_size));
-                        }
-                        node->temporaries->data[data->row_sums_index] = data->row_sums_id;
-                        TfLiteTensor* row_sums;
-                        TF_LITE_ENSURE_OK(
-                            context,
-                            GetTemporarySafe(context, node, data->row_sums_index, &row_sums));
-                        row_sums->type = kTfLiteInt32;
-                        row_sums->name = "Conv_row_sums";
-                        row_sums->allocation_type = kTfLiteArenaRwPersistent;
-                        // See above comment for the need to allocate for height of inputs.
-                        const int row_sums_dims[1] = { channels_out };
-                        if (!TfLiteIntArrayEqualsArray(row_sums->dims, 1, row_sums_dims)) 
-                        {
-                            TfLiteIntArray* row_sums_size = TfLiteIntArrayCreate(1);
-                            row_sums_size->data[0] = row_sums_dims[0];
-                            TF_LITE_ENSURE_OK(
-                                context, context->ResizeTensor(context, row_sums, row_sums_size));
-                        }
-                    }
-                }
-                
+#if LOGGER
                 //std::cout << std::endl << "\n\n ################ Checkpoint ################ \n\n" << std::endl;
                 //custom_logger::LogTfLiteTensor(*input);
                 //custom_logger::LogTfLiteTensor(*filter);
@@ -597,6 +436,8 @@ namespace tflite {
                 //std::cout << "channels out " << channels_out << std::endl;
                 //std::cout << "\n After \n" << std::endl;
                 //custom_logger::conv::LogTfLiteOpData(data);
+#endif // LOGGER
+
                 return kTfLiteOk;
             }
 

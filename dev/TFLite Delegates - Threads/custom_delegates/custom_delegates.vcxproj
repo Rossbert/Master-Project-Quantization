@@ -62,7 +62,7 @@
       <PreprocessorDefinitions>TFL_COMPILE_LIBRARY;NDEBUG;_CONSOLE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
       <LanguageStandard>stdcpp17</LanguageStandard>
-      <AdditionalIncludeDirectories>C:\Users\rosal\tensorflow source\tensorflow_src;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>C:\Users\rosal\tensorflow source\tensorflow_src;C:\Users\rosal\tensorflow source\tflite_c_build\gemmlowp;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <ShowIncludes>false</ShowIncludes>
     </ClCompile>
     <Link>
@@ -86,7 +86,7 @@
       <PreprocessorDefinitions>TFL_COMPILE_LIBRARY;NDEBUG;_CONSOLE;LOGGER;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
       <LanguageStandard>stdcpp17</LanguageStandard>
-      <AdditionalIncludeDirectories>C:\Users\rosal\tensorflow source\tensorflow_src;C:\Users\rosal\tensorflow source\tflite_c_build\gemmlowp;C:\Users\rosal\tensorflow source\tflite_c_build\ruy;C:\Users\rosal\tensorflow source\tflite_c_build\eigen;C:\Users\rosal\tensorflow source\tensorflow_src\third_party\xla\third_party\tsl;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>C:\Users\rosal\tensorflow source\tensorflow_src;C:\Users\rosal\tensorflow source\tflite_c_build\gemmlowp;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <ShowIncludes>false</ShowIncludes>
     </ClCompile>
     <Link>

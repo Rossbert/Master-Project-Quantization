@@ -197,7 +197,8 @@ Is it neccessary??
 Both needed or not??
 C:\Users\rosal\tensorflow source\tflite_c_build\eigen
 C:\Users\rosal\tensorflow source\tflite_c_build\gemmlowp
+C:\Users\rosal\tensorflow source\tflite_c_build\ruy
 
 
-// Requires the path:
+// Requires the path absolutely:
 // C:\Users\rosal\tensorflow source\tflite_c_build\gemmlowp
