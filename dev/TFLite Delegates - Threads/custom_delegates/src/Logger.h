@@ -10,6 +10,7 @@
 #include <tensorflow/lite/builtin_ops.h>
 
 #include "ConvOps.h"
+#include "FullyConnectedOps.h"
 
 namespace tflite {
 
@@ -24,6 +25,12 @@ namespace tflite {
 			// Gets the string version of OpData
 			void LogTfLiteOpData(const custom_ops::conv::OpData* const data);
 
+		}
+
+		namespace fully_connected {
+
+			// Gets the string version of OpData
+			void LogTfLiteOpData(const custom_ops::fully_connected::OpData* const data);
 		}
 
 		// Gets the string version of TfLiteDelegateFlags
@@ -50,6 +57,9 @@ namespace tflite {
 		// Gets the string version of the TfLiteQuantizationType
 		std::string get_TfLiteQuantizationType(const TfLiteQuantizationType type);
 
+		// Gets the string version of the TfLiteFullyConnectedWeightsFormat
+		std::string get_TfLiteFullyConnectedWeightsFormat(const TfLiteFullyConnectedWeightsFormat type);
+
 		// Logs a TfLiteAffineQuantization
 		void LogTfLiteAffineQuantization(const TfLiteAffineQuantization* const affine_quantization);
 
@@ -70,6 +80,9 @@ namespace tflite {
 
 		// Logs a TfLiteConvParams
 		void LogTfLiteConvParams(const TfLiteConvParams* const params);
+
+		// Logs a TfLiteFullyConnectedParams
+		void LogTfLiteFullyConnectedParams(const TfLiteFullyConnectedParams* const params);
 
 		// Logs a TfLiteNode
 		void LogTfLiteNode(const TfLiteNode* const node);

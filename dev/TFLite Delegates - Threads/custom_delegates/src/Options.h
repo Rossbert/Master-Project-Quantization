@@ -19,14 +19,19 @@ namespace tflite {
 	// Stores the options to determine the behaviour of the delegate
 	struct MyDelegateOptions
 	{
+		// Maximum number of threads to avoid bottleneck
+		// This number was obtained experimentally
+		constexpr static int max_number_threads = 8;
+
+		// Maximum number of operations to be performed by a thread
+		// This number was obtained experimentally
+		constexpr static int max_operations_per_thread = 100000;
+
 		// Operation mode:
 		//	- None: convolution runs normally
 		//	- Kernel weights: kernel weights are affected
 		//	- Convolution multiplication: convolution multiplication is affected
 		OperationMode operation_mode = OperationMode::none;
-
-		// Node index variable unused so far... delete later
-		int node_index = -1; // useless?
 
 		// Bit position to be flipped
 		int bit_position = -1;
@@ -37,29 +42,42 @@ namespace tflite {
 		// Size of the dataset
 		int dataset_size = 0;
 
-		// Number of threads for all processes
-		int num_threads = 4;
+		// Convert into vector if accepting more than one node
+		int node_index = -1;
 
+		// Convert into vector if accepting more than one node
+		int builtin_code = 0;
+
+		// Convert to vector for more than one node
 		// Number of channels of kernel filter to distribute to make use of threads
 		int channels = 0;
 
+		// Convert to vector for more than one node
 		// Size of the chunk of data of indexes to distribute to make use of threads
 		int chunk_size = 0;
 
+		// Number of threads for all processes
+		int num_threads = max_number_threads;
+
+		// Threaded version necessary?
+		bool is_threaded = false;
+
+		// Convert to vector for more than one node
 		// Name pattern of the layer to be affected
+		// If accepting more than one node this logic need to be modified
 		std::string layer_name = "";
 		
 		// Position vector values of the input tensor
 		// Filled during MyDelegateKernel::Init
-		std::vector<int> input_size;
+		std::vector<int> input_dimensions;
 
 		// Position vector values of the kernel tensor
 		// Filled during MyDelegateKernel::Init
-		std::vector<int> kernel_size;
+		std::vector<int> kernel_dimensions;
 
 		// Position vector values of the output tensor
 		// Filled during MyDelegateKernel::Init
-		std::vector<int> output_size;
+		std::vector<int> output_dimensions;
 
 		// Holds the indexes sectioned according to the real positions
 		std::vector<std::vector<std::vector<int>>> chunks_indexes;
@@ -68,11 +86,15 @@ namespace tflite {
 		std::vector<int> full_indexes;
 
 		// Convert to vector to accept more than one node
-		std::vector<std::vector<std::pair<int, int>>> errorPositions;
+		// Dimensions:
+		//	- dataset_size x num_flips x pairs of int positions
+		std::vector<std::vector<std::pair<int, int>>> error_flat_positions;
 
-		// Convert to vector to accept more than one node
-		// They are needed to discriminate the channels for threads
-		std::vector<std::vector<std::pair<std::vector<int>, std::vector<int>>>> realPositions;
+		// Convert to vector to accept more than one node.
+		// They are needed to discriminate the channels for threads.
+		// Dimensions:
+		//	- dataset_size x num_flips x pairs of vector positions
+		std::vector<std::vector<std::pair<std::vector<int>, std::vector<int>>>> error_vec_positions;
 
 		// Default constructor
 		// Careful, the generator is not seeded by the default constructor
@@ -80,9 +102,11 @@ namespace tflite {
 		MyDelegateOptions() = default;
 
 		/// <summary>
-		/// Copy constructor
+		/// Copy constructor<para/>
+		/// 1st Called from the initialization list of MyDelegate constructor<para/>
+		///	2nd Called from the initialization list of MyDelegateKernel constructor
 		/// </summary>
-		/// <param name="options"></param>
+		/// <param name="options">: Constant reference to an existing MyDelegateOptions instance</param>
 		MyDelegateOptions(const MyDelegateOptions& options);
 
 		/// <summary>
@@ -90,27 +114,43 @@ namespace tflite {
 		/// </summary>
 		/// <param name="operation_mode"></param>
 		/// <param name="node_index"></param>
-		/// <param name="bit_position"></param>
-		/// <param name="number_flips"></param>
-		/// <param name="dataset_size"></param>
-		/// <param name="channels"></param>
+		/// <param name="bit_position">: Bit position to be flipped</param>
+		/// <param name="number_flips">: Number of flips done in total</param>
+		/// <param name="dataset_size">: Size of the dataset in total</param>
+		/// <param name="channels">: Number of channels saved to created threaded version</param>
 		/// <param name="chunk_size"></param>
 		/// <param name="layer_name"></param>
-		MyDelegateOptions(const OperationMode operation_mode,
-			const int node_index, const int bit_position,
-			const int number_flips, const int dataset_size, const int channels, const int chunk_size, const std::string layer_name);
+		MyDelegateOptions(
+			const OperationMode operation_mode,
+			const int bit_position,
+			const int number_flips, 
+			const int dataset_size, 
+			const int node_index,
+			const int builtin_code,
+			const int channels, 
+			const int chunk_size, 
+			const std::string layer_name);
 
-		// Constructor with char pointer options
+		/// <summary>
+		/// Constructor with char pointers as input keys<para/>
+		///	&#009; - It is the first constructor called from the entry point
+		/// </summary>
+		/// <param name="options_keys">: Field names</param>
+		/// <param name="options_values">: Field values</param>
+		/// <param name="num_options">: Total number of parameters</param>
 		MyDelegateOptions(char** options_keys, char** options_values, size_t num_options);
 
 		// Convert integer position to vector position
-		void convertPosition(int position, int max_size, const std::vector<int>& elements, std::vector<int>& values);
+		void convertPositionInt2Vec(int position, int max_size, const std::vector<int>& tensor_dimensions, std::vector<int>& vec_position);
 
 		// Custom pair sorting
-		bool pair_greater(const std::pair<int, int>& pair1, const std::pair<int, int>& pair2);
+		bool getPairIntGreater(const std::pair<int, int>& pair1, const std::pair<int, int>& pair2);
+
+		// Convert vector position to integer position
+		int convertPositionVec2Int(const std::vector<int>& output_dimensions, const std::vector<int>& vec_position);
 
 		// Custom pair of vector positions sorting
-		bool pair_vectors_greater(const std::pair<std::vector<int>, std::vector<int>>& pair1, const std::pair<std::vector<int>, std::vector<int>>& pair2, const std::vector<int>& out_elements);
+		bool getPairVecGreater(const std::pair<std::vector<int>, std::vector<int>>& pair1, const std::pair<std::vector<int>, std::vector<int>>& pair2, const std::vector<int>& first_dimensions, const std::vector<int>& second_dimensions);
 
 		// Logger function of MyDelegateOptions
 		void Log() const;

@@ -5,21 +5,37 @@ namespace tflite {
 	// MyDelegateKernel Methods
 
 	MyDelegateKernel::MyDelegateKernel()
-		: operation_data_(nullptr), conv_params_(new TfLiteConvParams)
+		: operation_data_conv_(nullptr), 
+		conv_params_(new TfLiteConvParams),
+		operation_data_fully_(nullptr),
+		fully_params_(new TfLiteFullyConnectedParams)
 	{
 
 	}
+
 	MyDelegateKernel::MyDelegateKernel(const MyDelegateOptions& options)
-		: options_(options), operation_data_(nullptr), conv_params_(new TfLiteConvParams)
+		: options_(options), 
+		operation_data_conv_(nullptr), 
+		conv_params_(new TfLiteConvParams),
+		operation_data_fully_(nullptr),
+		fully_params_(new TfLiteFullyConnectedParams)
 	{
-
+		// Constructor with initializer options
+#if LOGGER
+		//std::cout << "MyDelegateKernel constructor with options\n";
+#endif // LOGGER
 	}
+
 	MyDelegateKernel::~MyDelegateKernel()
 	{
 		// Frees the memory created in Init of type OpData
-		custom_ops::conv::Free(nullptr, operation_data_);
+		custom_ops::conv::Free(nullptr, operation_data_conv_);
 		delete conv_params_;
+
+		custom_ops::fully_connected::Free(nullptr, operation_data_fully_);
+		delete fully_params_;
 	}
+
 	TfLiteStatus MyDelegateKernel::Init(TfLiteContext* context, const TfLiteDelegateParams* params)
 	{
 		// Stores the neccessary information in MyDelegateKernel instance
@@ -42,11 +58,6 @@ namespace tflite {
 		//inputs_.resize(params->nodes_to_replace->size);
 		// output shape is number_nodes x number of outputs per node 
 		//outputs_.resize(params->nodes_to_replace->size);
-		
-		// Stores the Convolution Operation Options
-		// can add more options later
-		// Heap allocated, should be freed in the destructor
-		operation_data_ = reinterpret_cast<custom_ops::conv::OpData*>(custom_ops::conv::Init(context, nullptr, 0));
 
 		for (int i = 0; i < params->nodes_to_replace->size; ++i)
 		{
@@ -59,8 +70,7 @@ namespace tflite {
 			TF_LITE_ENSURE_EQ(
 				context,
 				context->GetNodeAndRegistration(context, node_index, &delegated_node,
-					&delegated_node_registration),
-				kTfLiteOk);
+					&delegated_node_registration), kTfLiteOk);
 
 			int input_index, bias_index, filter_index;
 			// Warning: ASSUMING THAT THERE IS ONLY ONE OUTPUT!!!
@@ -68,7 +78,7 @@ namespace tflite {
 			for (int j = 0; j < delegated_node->inputs->size; j++)
 			{
 				//inputs_[i].push_back(delegated_node->inputs->data[j]);
-				custom_ops::conv::GetTensorIndexes(context, delegated_node, &bias_index, &filter_index, &input_index);
+				custom_ops::GetTensorIndexes(context, delegated_node, &bias_index, &filter_index, &input_index);
 				
 			}
 			//for (int j = 0; j < delegated_node->outputs->size; j++)
@@ -80,136 +90,258 @@ namespace tflite {
 			const auto& filter_tensor = context->tensors[delegated_node->inputs->data[filter_index]];
 			const auto& output_tensor = context->tensors[delegated_node->outputs->data[output_index]];
 			
-			std::cout << "Input size\n";
 			for (int k = 0; k < input_tensor.dims->size; k++)
 			{
-				options_.input_size.push_back(input_tensor.dims->data[k]);
-				std::cout << options_.input_size.back() << " ";
+				options_.input_dimensions.push_back(input_tensor.dims->data[k]);
 			}
-			std::cout << "\n";
-			std::cout << "Filter size\n";
 			for (int k = 0; k < filter_tensor.dims->size; k++)
 			{
-				options_.kernel_size.push_back(filter_tensor.dims->data[k]);
-				std::cout << options_.kernel_size.back() << " ";
+				options_.kernel_dimensions.push_back(filter_tensor.dims->data[k]);
 			}
-			std::cout << "\n";
-			std::cout << "Output size\n";
 			for (int k = 0; k < output_tensor.dims->size; k++)
 			{
-				options_.output_size.push_back(output_tensor.dims->data[k]);
-				std::cout << options_.output_size.back() << " ";
+				options_.output_dimensions.push_back(output_tensor.dims->data[k]);
 			}
-			std::cout << "\n";
+
+			options_.builtin_code = delegated_node_registration->builtin_code;
+
+#if LOGGER
+			//std::cout << "Input size\n";
+			//for (const int& val : options_.input_dimensions)
+			//{
+			//	std::cout << val << " ";
+			//}
+			//std::cout << "\n";
+			//std::cout << "Filter size\n";
+			//for (const int& val : options_.kernel_dimensions)
+			//{
+			//	std::cout << val << " ";
+			//}
+			//std::cout << "\n";
+			//std::cout << "Output size\n";
+			//for (const int& val : options_.output_dimensions)
+			//{
+			//	std::cout << val << " ";
+			//}
+			//std::cout << "\n";
+
+			//std::cout << "Registration type: " << custom_logger::get_builtin_code(options_.builtin_code) << "\n";
+#endif // LOGGER
+
+			// Stores the Convolution Operation Options
+			// can add more options later
+			// Heap allocated, should be freed in the destructor
+			operation_data_conv_ = reinterpret_cast<custom_ops::conv::OpData*>(custom_ops::conv::Init(context, nullptr, 0));
+
+			// Stores the Fully Connected Operation Options
+			// can add more options later
+			// Heap allocated, should be freed in the destructor
+			operation_data_fully_ = reinterpret_cast<custom_ops::fully_connected::OpData*>(custom_ops::fully_connected::Init(context, nullptr, 0));
 
 			// Modify this to accept more than 1 node
 			// For the moment it only stores 1 node's information
 			// This operation fails for dense layer!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-			GetOperationData(*reinterpret_cast<custom_ops::conv::OpData*>(delegated_node->user_data));
-			GetConvParams(*reinterpret_cast<TfLiteConvParams*>(delegated_node->builtin_data));
+			switch (options_.builtin_code)
+			{
+			case kTfLiteBuiltinConv2d: {
+				GetConvOperationData(*reinterpret_cast<custom_ops::conv::OpData*>(delegated_node->user_data));
+				GetConvParams(*reinterpret_cast<TfLiteConvParams*>(delegated_node->builtin_data));
 
-			//////////////////
-			int output_size = custom_ops::size_extraction(output_tensor.dims);
-			int kernel_partial_size = custom_ops::size_extraction(filter_tensor.dims, 1);
+				//custom_logger::LogTfLiteConvParams(conv_params_);
+				//custom_logger::conv::LogTfLiteOpData(operation_data_conv_);
+			}
+				break;
+			case kTfLiteBuiltinFullyConnected: {
+				GetFullyOperationData(*reinterpret_cast<custom_ops::fully_connected::OpData*>(delegated_node->user_data));
+				GetFullyParams(*reinterpret_cast<TfLiteFullyConnectedParams*>(delegated_node->builtin_data));
 
-			//std::cout << "output size " << output_size << "\n";
-			//std::cout << "kernel partial size " << kernel_partial_size << "\n";
+				//custom_logger::LogTfLiteFullyConnectedParams(fully_params_);
+				//custom_logger::fully_connected::LogTfLiteOpData(operation_data_fully_);
+			}
+				break;
+			default:
+				break;
+			}
+			
+			int output_flat_size = custom_ops::getFlatSize(output_tensor.dims);
+			int kernel_partial_flat_size = custom_ops::getFlatSize(filter_tensor.dims, 1);
 
+			/// Random variables generation!
 			std::random_device random_device;
 			std::mt19937 mt_generator(random_device());
-			std::uniform_int_distribution<int> output_dist(0, output_size - 1);
-			std::uniform_int_distribution<int> kernel_dist(0, kernel_partial_size - 1);
-
-			// Gathering the variables of convolution
-			const int& stride_height = conv_params_->stride_height;
-			const int& stride_width = conv_params_->stride_width;
-			const int& dilation_height_factor = conv_params_->dilation_height_factor;
-			const int& dilation_width_factor = conv_params_->dilation_width_factor;
-
-			const int& pad_height = operation_data_->padding.height;
-			const int& pad_width = operation_data_->padding.width;
-
-			const int& input_height = options_.input_size[1];
-			const int& input_width = options_.input_size[2];
+			std::uniform_int_distribution<int> output_dist(0, output_flat_size - 1);
+			std::uniform_int_distribution<int> kernel_dist(0, kernel_partial_flat_size - 1);
 
 			// Get partial sizes, first element of the kernel size is not needed
-			std::vector<int> kernel_partial_size_values(options_.kernel_size.begin() + 1, options_.kernel_size.end());
+			std::vector<int> kernel_partial_dimensions(options_.kernel_dimensions.begin() + 1, options_.kernel_dimensions.end());
+			
+#if LOGGER
+			//std::cout << "output size " << output_flat_size << "\n";
+			//std::cout << "kernel partial size " << kernel_partial_flat_size << "\n";
+			//std::cout << "Kernel dimensions: ";
+			//for (const auto& val : kernel_partial_dimensions)
+			//{
+			//	std::cout << val << " ";
+			//}
+			//std::cout << "\n";
+#endif // LOGGER
+
+			int stride_height;
+			int stride_width;
+			int dilation_height_factor;
+			int dilation_width_factor;
+			int pad_height;
+			int pad_width;
+			int input_height;
+			int input_width;
+			if (options_.builtin_code == kTfLiteBuiltinConv2d)
+			{
+				// Gathering the variables of convolution
+				stride_height = conv_params_->stride_height;
+				stride_width = conv_params_->stride_width;
+				dilation_height_factor = conv_params_->dilation_height_factor;
+				dilation_width_factor = conv_params_->dilation_width_factor;
+
+				pad_height = operation_data_conv_->padding.height;
+				pad_width = operation_data_conv_->padding.width;
+
+				input_height = options_.input_dimensions[1];
+				input_width = options_.input_dimensions[2];
+			}
+
+			// Here organize the indexes of the chunks of the channels
+			options_.full_indexes.resize(options_.number_flips);
+			// Fill values with increasing order from 0 to size of indexes
+			std::iota(options_.full_indexes.begin(), options_.full_indexes.end(), 0);
+
+			// Constants for accelerating the threaded version
+			// channels are always the position 0 of the kernel dimensions
+			int number_operations = getNumberOperations(options_.output_dimensions, options_.kernel_dimensions);
+			options_.num_threads = number_operations / options_.max_operations_per_thread;
+			if (options_.num_threads == 0)
+				options_.num_threads = 1;
+			options_.num_threads = std::min(options_.num_threads, options_.max_number_threads); // Ensuring the number of threads doesn't exceed the number of channels
+			options_.channels = options_.kernel_dimensions[0];
+			options_.chunk_size = options_.channels / options_.num_threads;
+			// Here determine if it will be threaded or not
+			if (options_.num_threads != 1)
+			{
+				options_.is_threaded = true;
+			}
+
+#if LOGGER
+			std::cout << "Is threaded?: " << (options_.is_threaded ? "true" : "false") << "\n";
+			std::cout << "Number of threads " << options_.num_threads << "\n";
+			//std::cout << "Number of operations " << number_operations << "\n";
+			//std::cout << "Chunk size: " << options_.chunk_size << "\n";
+#endif // LOGGER
+
+
 			// Put everything that follows on a loop to generate the whole dataset random positions beforehand
 			// For MNIST Fashion options_.dataset_size = 10000
 			for (int j = 0; j < options_.dataset_size; j++)
 			{
 				// MUST BE RESERVE not RESIZE
-				options_.errorPositions[j].reserve(options_.number_flips);
-				options_.realPositions[j].reserve(options_.number_flips);
+				options_.error_flat_positions[j].reserve(options_.number_flips);
+				options_.error_vec_positions[j].reserve(options_.number_flips);
 
 				// Generating the output error positions
 				for (int k = 0; k < options_.number_flips; ++k)
 				{
-					std::vector<int> out_values;
-					std::vector<int> kernel_values;
-					out_values.reserve(4);
-					kernel_values.reserve(4);
+					std::vector<int> output_error_vec_pos;
+					std::vector<int> kernel_error_vec_pos;
+					output_error_vec_pos.reserve(options_.output_dimensions.size());
+					kernel_error_vec_pos.reserve(options_.kernel_dimensions.size());
 
 					// Generating the output error position
-					int output_error_position = output_dist(mt_generator);
-					int kernel_partial_position;
-					options_.convertPosition(output_error_position, output_size, options_.output_size, out_values);
-				
-					const int in_y_origin = (out_values[1] * stride_height) - pad_height;
-					const int in_x_origin = (out_values[2] * stride_width) - pad_width;
+					int output_error_flat_pos = output_dist(mt_generator);
+					int kernel_partial_flat_pos;
+					options_.convertPositionInt2Vec(output_error_flat_pos, output_flat_size, options_.output_dimensions, output_error_vec_pos);
+					
 					int input_y, input_x;
-					bool flag_inside_input = false;
+					int in_y_origin;
+					int in_x_origin;
+					if (options_.builtin_code == kTfLiteBuiltinConv2d)
+					{
+						in_y_origin = (output_error_vec_pos[1] * stride_height) - pad_height;
+						in_x_origin = (output_error_vec_pos[2] * stride_width) - pad_width;
+					}
+					bool flag_valid_pos = false;
 					do
 					{
 						// This has to be done in a do while loop, to make certain it is inside the input
-						kernel_values.clear();
+						kernel_error_vec_pos.clear();
+						
 						// Push the last element of out position = channels
 						// It is the first element of the kernel position
-						kernel_values.push_back(out_values.back());
+						kernel_error_vec_pos.push_back(output_error_vec_pos.back());
 
 						// Generating the random number
-						kernel_partial_position = kernel_dist(mt_generator);
+						kernel_partial_flat_pos = kernel_dist(mt_generator);
 
 						// Convert the number to position values
-						options_.convertPosition(kernel_partial_position, kernel_partial_size, kernel_partial_size_values, kernel_values);
+						options_.convertPositionInt2Vec(kernel_partial_flat_pos, kernel_partial_flat_size, kernel_partial_dimensions, kernel_error_vec_pos);
 
-						// Verify that the values are in range!!! Only happens if there is padding present
-						// output : batch   output_y    output_x    output_channel
-						//          0       1           2           3
-						// kernel:  output_channel  kernel_y    kernel_x    input_channel
-						//          0               1           2           3
+						if (options_.builtin_code == kTfLiteBuiltinConv2d)
+						{
+							// Verify that the values are in range!!! Only happens if there is padding present
+							// output : batch   output_y    output_x    output_channel
+							//          0       1           2           3
+							// kernel:  output_channel  kernel_y    kernel_x    input_channel
+							//          0               1           2           3
 
-						input_y = in_y_origin + dilation_height_factor * kernel_values[1];
-						input_x = in_x_origin + dilation_width_factor * kernel_values[2];
-						//std::cout << "input_y: " << input_y << " input_x: " << input_x << "\n";
-						if (input_y >= 0 && input_y < input_height && input_x >= 0 && input_x < input_width)
-							flag_inside_input = true;
-					} while (!flag_inside_input);
+							input_y = in_y_origin + dilation_height_factor * kernel_error_vec_pos[1];
+							input_x = in_x_origin + dilation_width_factor * kernel_error_vec_pos[2];
+
+							//std::cout << "input_y: " << input_y << " input_x: " << input_x << "\n";
+						}
+						
+						std::pair<int, int> candidate_position = { output_error_flat_pos, kernel_partial_flat_pos };
+						auto it = std::find(options_.error_flat_positions[j].begin(), options_.error_flat_positions[j].end(), candidate_position);
+						bool repeated_pos = false;
+						if (it != options_.error_flat_positions[j].end()) 
+						{
+							repeated_pos = true;
+#if LOGGER
+							//std::cout << "Repeated pos: " << candidate_position.first << " - " << candidate_position.second << "\n";
+							//std::cout << "Element found at index " << std::distance(options_.error_flat_positions[j].begin(), it) << "\n";
+#endif // LOGGER
+						}
+
+						bool is_inside = input_y >= 0 && input_y < input_height && input_x >= 0 && input_x < input_width;
+
+						if (not repeated_pos && (options_.builtin_code == kTfLiteBuiltinFullyConnected || is_inside))
+							flag_valid_pos = true;
+						// Check not repeated positions
+					} while (!flag_valid_pos);
 
 					// After the verification
-					options_.errorPositions[j].emplace_back(output_error_position, kernel_partial_position);
-					options_.realPositions[j].emplace_back(out_values, kernel_values);
+					options_.error_flat_positions[j].emplace_back(output_error_flat_pos, kernel_partial_flat_pos);
+					options_.error_vec_positions[j].emplace_back(output_error_vec_pos, kernel_error_vec_pos);
 
 				}
-				std::sort(options_.errorPositions[j].begin(), options_.errorPositions[j].end(), [this](const std::pair<int, int>& pair1, const std::pair<int, int>& pair2) { return options_.pair_greater(pair1, pair2); });
-				std::sort(options_.realPositions[j].begin(), options_.realPositions[j].end(), [this](const std::pair<std::vector<int>, std::vector<int>>& pair1, const std::pair<std::vector<int>, std::vector<int>>& pair2) { return options_.pair_vectors_greater(pair1, pair2, options_.output_size); });
+				
+				std::sort(options_.error_flat_positions[j].begin(), 
+					options_.error_flat_positions[j].end(), 
+					[this](const std::pair<int, int>& pair1, const std::pair<int, int>& pair2) 
+					{ 
+						return options_.getPairIntGreater(pair1, pair2); 
+					});
+				std::sort(options_.error_vec_positions[j].begin(), 
+					options_.error_vec_positions[j].end(), 
+					[this](const std::pair<std::vector<int>, std::vector<int>>& pair1, const std::pair<std::vector<int>, std::vector<int>>& pair2) 
+					{ 
+						return options_.getPairVecGreater(pair1, pair2, options_.output_dimensions, options_.kernel_dimensions); 
+					});
 
-				// Here organize the indexes of the chunks of the channels
-				options_.full_indexes.resize(options_.number_flips);
-				// Fill values with increasing order from 0 to size of indexes
-				std::iota(options_.full_indexes.begin(), options_.full_indexes.end(), 0);
-
-				options_.channels = options_.kernel_size[0];
-				options_.num_threads = std::min(options_.num_threads, options_.channels); // Ensuring the number of threads doesn't exceed the number of rows
-				options_.chunk_size = options_.channels / options_.num_threads;
-
+				// For threaded computation
+				// Separates the indexes by chunks
 				std::vector<int> chunk_indexes;
-
 				for (int k = 0; k < options_.num_threads; ++k)
 				{
 					const int start = k * options_.chunk_size;
 					const int end = std::min(start + options_.chunk_size, options_.channels);
-					getIndexes(start, end, options_.realPositions[j], chunk_indexes);
+					getChunkIndexes(start, end, options_.error_vec_positions[j], chunk_indexes);
 
 					//std::cout << "Start: " << start << " End: " << end << "\n";
 					//std::cout << "Indexes in chunk " << k << ": ";
@@ -222,22 +354,8 @@ namespace tflite {
 					options_.chunks_indexes[j].emplace_back(chunk_indexes);
 				}
 
-				//std::cout << "Real positions\n";
-				//for (const auto& val : options_.realPositions[j])
-				//{
-				//	for (const int& element : val.first)
-				//	{
-				//		std::cout << element << " ";
-				//	}
-				//	std::cout << "- ";
-				//	for (const int& element : val.second)
-				//	{
-				//		std::cout << element << " ";
-				//	}
-				//	std::cout << "\n";
-				//}
-				//std::cout << "\n";
-				//std::cout << "item " << j << "\n";
+#if LOGGER
+				//std::cout << "Item " << j << "\n";
 				//for (int k = 0; k < options_.chunks_indexes[j].size(); k++)
 				//{
 				//	std::cout << "Chunk " << k << "\n";
@@ -247,17 +365,13 @@ namespace tflite {
 				//	}
 				//	std::cout << "\n";
 				//}
-				//std::cout << "\n";
-
-#if LOGGER
-				//std::cout << "Error positions\n";
-				//for (const auto& val : options_.errorPositions[j])
+				//std::cout << "Error flat positions\n";
+				//for (const auto& val : options_.error_flat_positions[j])
 				//{
 				//	std::cout << val.first << " - " << val.second << "\n";
 				//}
-				//std::cout << "\n";
-				//std::cout << "Real positions\n";
-				//for (const auto& val : options_.realPositions[j])
+				//std::cout << "Error vector positions\n";
+				//for (const auto& val : options_.error_vec_positions[j])
 				//{
 				//	for (const int& element : val.first)
 				//	{
@@ -270,28 +384,48 @@ namespace tflite {
 				//	}
 				//	std::cout << "\n";
 				//}
-				//std::cout << "\n";
-
 #endif // LOGGER
 			
 			}
 
 #if LOGGER
-			//std::cout << "Indexes values: ";
-			//for (const auto& val : options_.indexes)
+			//std::cout << "Indexes\n";
+			//for (const auto& val : options_.full_indexes)
 			//{
 			//	std::cout << val << " ";
 			//}
 			//std::cout << "\n";
+
+			//int j = 0;
+			//std::cout << "Error flat positions\n";
+			//for (const auto& val : options_.error_flat_positions[j])
+			//{
+			//	std::cout << val.first << " - " << val.second << "\n";
+			//}
+			//std::cout << "Error vector positions\n";
+			//for (const auto& val : options_.error_vec_positions[j])
+			//{
+			//	for (const int& element : val.first)
+			//	{
+			//		std::cout << element << " ";
+			//	}
+			//	std::cout << "- ";
+			//	for (const int& element : val.second)
+			//	{
+			//		std::cout << element << " ";
+			//	}
+			//	std::cout << "\n";
+			//}
 			//std::cout << "Special logging! To be delegated node index: " << node_index << std::endl;
-			////custom_logger::LogTfLiteContext(context);
-			//custom_logger::LogTfLiteRegistration(delegated_node_registration);
 			//std::cout << "Memory address of node: " << reinterpret_cast<void*>(delegated_node) << std::endl;
+			//custom_logger::LogTfLiteRegistration(delegated_node_registration);
+			//custom_logger::LogTfLiteContext(context);
 			//custom_logger::LogTfLiteNode(delegated_node);
 #endif // LOGGER
 		}
 		return kTfLiteOk;
 	}
+	
 	TfLiteStatus MyDelegateKernel::Prepare(TfLiteContext* context, TfLiteNode* node)
 	{
 		// This method gets called once when creating the Interpreter and once again when allocating the tensors PER NODE????
@@ -320,7 +454,14 @@ namespace tflite {
 			// Calling the Custom Preparation
 			// Careful the order of inputs in the receiving node is not the same as the standard order
 			prepared_ = true;
-			prepared_success = custom_ops::conv::Prepare<tflite::custom_ops::conv::kReference>(context, node, conv_params_, operation_data_);
+			if (options_.builtin_code == kTfLiteBuiltinConv2d)
+			{
+				prepared_success = custom_ops::conv::Prepare<tflite::custom_ops::conv::kReference>(context, node, conv_params_, operation_data_conv_);
+			}
+			else
+			{
+				prepared_success = custom_ops::fully_connected::Prepare<tflite::custom_ops::fully_connected::kReference>(context, node, fully_params_, operation_data_fully_);
+			}
 		}
 		else
 		{
@@ -340,6 +481,7 @@ namespace tflite {
 
 		return prepared_success;
 	}
+	
 	TfLiteStatus MyDelegateKernel::Eval(TfLiteContext* context, TfLiteNode* node)
 	{
 		// Evaluate the delegated graph.
@@ -362,7 +504,14 @@ namespace tflite {
 #endif // LOGGER
 		TfLiteStatus evalued_success;
 
-		evalued_success = custom_ops::conv::Eval<custom_ops::conv::kReference>(context, node, conv_params_, operation_data_, options_);
+		if (options_.builtin_code == kTfLiteBuiltinConv2d)
+		{
+			evalued_success = custom_ops::conv::Eval<custom_ops::conv::kReference>(context, node, conv_params_, operation_data_conv_, options_);
+		}
+		else
+		{
+			evalued_success = custom_ops::fully_connected::Eval<custom_ops::fully_connected::kReference>(context, node, fully_params_, operation_data_fully_, options_);
+		}
 
 #if LOGGER
 		//std::cout << "Evaluation result: " << custom_logger::get_TfLiteStatus(evalued_success) << std::endl;
@@ -370,48 +519,50 @@ namespace tflite {
 
 		return evalued_success;
 	}
-	void MyDelegateKernel::GetOperationData(const custom_ops::conv::OpData& operation_data)
-	{
-		operation_data_->im2col_id = operation_data.im2col_id;
-		operation_data_->hwcn_weights_id = operation_data.hwcn_weights_id;
-		operation_data_->input_quantized_id = operation_data.input_quantized_id;
-		operation_data_->scaling_factors_id = operation_data.scaling_factors_id;
-		operation_data_->input_offset_id = operation_data.input_offset_id;
-		operation_data_->accum_scratch_id = operation_data.accum_scratch_id;
-		
-		operation_data_->row_sums_id = operation_data.row_sums_id;
-		
-		operation_data_->padding = operation_data.padding;
-		
-		operation_data_->output_multiplier = operation_data.output_multiplier;
-		operation_data_->output_shift = operation_data.output_shift;
-		
-		operation_data_->per_channel_output_multiplier = operation_data.per_channel_output_multiplier;
-		operation_data_->per_channel_output_shift = operation_data.per_channel_output_shift;
-		
-		operation_data_->output_activation_min = operation_data.output_activation_min;
-		operation_data_->output_activation_max = operation_data.output_activation_max;
 
-		operation_data_->im2col_index = operation_data.im2col_index;
-		operation_data_->hwcn_weights_index = operation_data.hwcn_weights_index;
-		operation_data_->input_quantized_index = operation_data.input_quantized_index;
-		operation_data_->scaling_factors_index = operation_data.scaling_factors_index;
-		operation_data_->accum_scratch_index = operation_data.accum_scratch_index;
-		operation_data_->input_offset_index = operation_data.input_offset_index;
-		operation_data_->row_sums_index = operation_data.row_sums_index;
+	void MyDelegateKernel::GetConvOperationData(const custom_ops::conv::OpData& operation_data)
+	{
+		operation_data_conv_->im2col_id = operation_data.im2col_id;
+		operation_data_conv_->hwcn_weights_id = operation_data.hwcn_weights_id;
+		operation_data_conv_->input_quantized_id = operation_data.input_quantized_id;
+		operation_data_conv_->scaling_factors_id = operation_data.scaling_factors_id;
+		operation_data_conv_->input_offset_id = operation_data.input_offset_id;
+		operation_data_conv_->accum_scratch_id = operation_data.accum_scratch_id;
 		
-		operation_data_->need_hwcn_weights = operation_data.need_hwcn_weights;
-		operation_data_->have_weights_been_transposed = operation_data.have_weights_been_transposed;
-		operation_data_->need_im2col = operation_data.need_im2col;
-		operation_data_->im2col_oversized = operation_data.im2col_oversized;
+		operation_data_conv_->row_sums_id = operation_data.row_sums_id;
 		
-		operation_data_->supports_multithreaded_kernel = operation_data.supports_multithreaded_kernel;
-		operation_data_->is_hybrid_per_channel = operation_data.is_hybrid_per_channel;
-		operation_data_->compute_hybrid_row_sums = operation_data.compute_hybrid_row_sums;
+		operation_data_conv_->padding = operation_data.padding;
 		
-		operation_data_->groups = operation_data.groups;
-		operation_data_->quantized_bias_type = operation_data.quantized_bias_type;
+		operation_data_conv_->output_multiplier = operation_data.output_multiplier;
+		operation_data_conv_->output_shift = operation_data.output_shift;
+		
+		operation_data_conv_->per_channel_output_multiplier = operation_data.per_channel_output_multiplier;
+		operation_data_conv_->per_channel_output_shift = operation_data.per_channel_output_shift;
+		
+		operation_data_conv_->output_activation_min = operation_data.output_activation_min;
+		operation_data_conv_->output_activation_max = operation_data.output_activation_max;
+
+		operation_data_conv_->im2col_index = operation_data.im2col_index;
+		operation_data_conv_->hwcn_weights_index = operation_data.hwcn_weights_index;
+		operation_data_conv_->input_quantized_index = operation_data.input_quantized_index;
+		operation_data_conv_->scaling_factors_index = operation_data.scaling_factors_index;
+		operation_data_conv_->accum_scratch_index = operation_data.accum_scratch_index;
+		operation_data_conv_->input_offset_index = operation_data.input_offset_index;
+		operation_data_conv_->row_sums_index = operation_data.row_sums_index;
+		
+		operation_data_conv_->need_hwcn_weights = operation_data.need_hwcn_weights;
+		operation_data_conv_->have_weights_been_transposed = operation_data.have_weights_been_transposed;
+		operation_data_conv_->need_im2col = operation_data.need_im2col;
+		operation_data_conv_->im2col_oversized = operation_data.im2col_oversized;
+		
+		operation_data_conv_->supports_multithreaded_kernel = operation_data.supports_multithreaded_kernel;
+		operation_data_conv_->is_hybrid_per_channel = operation_data.is_hybrid_per_channel;
+		operation_data_conv_->compute_hybrid_row_sums = operation_data.compute_hybrid_row_sums;
+		
+		operation_data_conv_->groups = operation_data.groups;
+		operation_data_conv_->quantized_bias_type = operation_data.quantized_bias_type;
 	}
+	
 	void MyDelegateKernel::GetConvParams(const TfLiteConvParams& params)
 	{
 		conv_params_->padding = params.padding;
@@ -422,19 +573,63 @@ namespace tflite {
 		conv_params_->dilation_height_factor = params.dilation_height_factor;
 		conv_params_->quantized_bias_type = params.quantized_bias_type;
 	}
-	void MyDelegateKernel::getIndexes(int start, int end, const std::vector<std::pair<std::vector<int>, std::vector<int>>>& realPositions, std::vector<int>& indexes)
+
+	void MyDelegateKernel::GetFullyOperationData(const custom_ops::fully_connected::OpData& operation_data)
+	{
+		operation_data_fully_->output_multiplier = operation_data.output_multiplier;
+		operation_data_fully_->output_shift = operation_data.output_shift;
+
+		operation_data_fully_->per_channel_output_multiplier = operation_data.per_channel_output_multiplier;
+		operation_data_fully_->per_channel_output_shift = operation_data.per_channel_output_shift;
+
+		operation_data_fully_->output_activation_min = operation_data.output_activation_min;
+		operation_data_fully_->output_activation_max = operation_data.output_activation_max;
+
+		operation_data_fully_->scratch_tensor_index = operation_data.scratch_tensor_index;
+		operation_data_fully_->compute_row_sums = operation_data.compute_row_sums;
+
+		operation_data_fully_->ledger_initialized = operation_data.ledger_initialized;
+
+		operation_data_fully_->quantized_bias_type = operation_data.quantized_bias_type;
+	}
+
+	void MyDelegateKernel::GetFullyParams(const TfLiteFullyConnectedParams& params)
+	{
+		fully_params_->activation = params.activation;
+		fully_params_->weights_format = params.weights_format;
+		fully_params_->keep_num_dims = params.keep_num_dims;
+		fully_params_->asymmetric_quantize_inputs = params.asymmetric_quantize_inputs;
+		fully_params_->quantized_bias_type = params.quantized_bias_type;
+	}
+
+	void MyDelegateKernel::getChunkIndexes(int start, int end, const std::vector<std::pair<std::vector<int>, std::vector<int>>>& error_vec_positions, std::vector<int>& indexes)
 	{
 		indexes.clear();
-		for (int i = 0; i < realPositions.size(); i++)
+		for (int i = 0; i < error_vec_positions.size(); i++)
 		{
 			// We are checking the channel of the channel output of the first position 
-			const int& output_channel = realPositions[i].first.back();
+			const int& output_channel = error_vec_positions[i].first.back();
 			// Range does not include end
 			if (output_channel >= start && output_channel < end)
 			{
 				indexes.push_back(i);
 			}
 		}
+	}
+
+	int MyDelegateKernel::getNumberOperations(const std::vector<int>& output_dimensions, const std::vector<int>& kernel_dimensions)
+	{
+		// It is assumed the last dimension of the output coincides with the first of the kernel
+		int acc = 1;
+		for (const int& out : output_dimensions)
+		{
+			acc *= out;
+		}
+		for (int j = 1; j < kernel_dimensions.size(); j++)
+		{
+			acc *= kernel_dimensions[j];
+		}
+		return acc;
 	}
 
 	// MyDelegate Methods
@@ -446,7 +641,12 @@ namespace tflite {
 	MyDelegate::MyDelegate(const MyDelegateOptions& options)
 		: options_(options)
 	{
+		// Called from the entry point by creating an unique pointer there
+		// MyDelegate is created before the MyDelegateKernel
 		// The initialization list calls the copy constructor of options_ MyDelegateOptions
+#if LOGGER
+		//std::cout << "MyDelegate constructor with options\n";
+#endif // LOGGER
 	}
 	MyDelegate::~MyDelegate()
 	{
@@ -494,7 +694,7 @@ namespace tflite {
 
 		// Looking by name, if layer is not named, logic should be changed
 #if LOGGER
-		std::cout << "Kernel tensor name: " << kernel_tensor.name << "\n";
+		//std::cout << "Kernel tensor name: " << kernel_tensor.name << "\n";
 #endif // LOGGER
 		// By this criteria only one node will be accepted!
 		if (strstr(kernel_tensor.name, options_.layer_name.c_str()) == nullptr)
@@ -505,7 +705,7 @@ namespace tflite {
 		{
 			// Generate random number here to affect the weights of the kernel
 			signed char* tensor_ptr = reinterpret_cast<signed char*>(kernel_tensor.data.data);
-			int size = custom_ops::size_extraction(kernel_tensor.dims);
+			int size = custom_ops::getFlatSize(kernel_tensor.dims);
 			std::random_device random_device;
 			std::mt19937 mt_generator(random_device());
 			std::uniform_int_distribution<int> dist(0, size - 1);
@@ -558,6 +758,10 @@ namespace tflite {
 	std::unique_ptr<SimpleDelegateKernelInterface> MyDelegate::CreateDelegateKernelInterface()
 	{
 		// Creates one unique pointer of MyDelegateKernel
+		// This calls the constructor of MyDelegateKernel and passes options_ as a parameter
+#if LOGGER
+		//std::cout << "Created Simple Interface\n";
+#endif // LOGGER
 		return std::make_unique<MyDelegateKernel>(options_);
 	}
 	SimpleDelegateInterface::Options MyDelegate::DelegateOptions() const

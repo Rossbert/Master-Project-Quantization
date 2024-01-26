@@ -19,26 +19,6 @@ namespace tflite {
                 delete reinterpret_cast<OpData*>(buffer);
             }
 
-            void GetTensorIndexes(TfLiteContext* context, TfLiteNode* node,
-                int* bias_index, int* filter_index, int* input_index)
-            {
-                for (int i = 0; i < node->inputs->size; i++)
-                {
-                    const auto& tensor = context->tensors[node->inputs->data[i]];
-                    // Input tensor has a reference to dimension signature
-                    if (tensor.dims_signature != nullptr)
-                        *input_index = i;
-                    else
-                    {
-                        // Filter tensor must not have dimension = 1 (only tensor with dim = 1 is bias tensor)
-                        if (tensor.dims->size != 1)
-                            *filter_index = i;
-                        else
-                            *bias_index = i;
-                    }
-                }
-            }
-
             bool IsIm2ColRequired(const TfLiteTensor* input, TfLiteConvParams* params,
                 const TfLiteTensor* filter, OpData* data, bool is_hybrid,
                 KernelType kernel_type) 
@@ -443,7 +423,27 @@ namespace tflite {
 
         }
 
-        int size_extraction(const TfLiteIntArray* const dimensions)
+        void GetTensorIndexes(TfLiteContext* context, TfLiteNode* node,
+            int* bias_index, int* filter_index, int* input_index)
+        {
+            for (int i = 0; i < node->inputs->size; i++)
+            {
+                const auto& tensor = context->tensors[node->inputs->data[i]];
+                // Input tensor has a reference to dimension signature
+                if (tensor.dims_signature != nullptr)
+                    *input_index = i;
+                else
+                {
+                    // Filter tensor must not have dimension = 1 (only tensor with dim = 1 is bias tensor)
+                    if (tensor.dims->size != 1)
+                        *filter_index = i;
+                    else
+                        *bias_index = i;
+                }
+            }
+        }
+
+        int getFlatSize(const TfLiteIntArray* const dimensions)
         {
             int acc = 1;
             for (int i = 0; i < dimensions->size; i++)
@@ -451,12 +451,12 @@ namespace tflite {
             return acc;
         }
 
-        int size_extraction(const TfLiteIntArray* const dimensions, const int starting_index)
+        int getFlatSize(const TfLiteIntArray* const dimensions, const int starting_index)
         {
             int acc = 1;
             for (int i = starting_index; i < dimensions->size; i++)
                 acc *= dimensions->data[i];
             return acc;
         }
-    }
-}
+    } // namespace custom_ops
+} // namespace tflite

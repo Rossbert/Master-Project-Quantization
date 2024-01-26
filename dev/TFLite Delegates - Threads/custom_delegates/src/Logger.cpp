@@ -75,6 +75,39 @@ namespace tflite {
 			}
 		}
 
+		namespace fully_connected {
+
+			void LogTfLiteOpData(const custom_ops::fully_connected::OpData* const data)
+			{
+				std::cout << "TfLiteFullyConnectedOpData:" << std::endl;
+				std::cout << "~~~~~~~~~~~~~~~~~" << std::endl;
+				std::cout << "Output multipier: " << data->output_multiplier << std::endl;
+				std::cout << "Output shift: " << data->output_shift << std::endl;
+				std::cout << "Per channel output multiplier (" << data->per_channel_output_multiplier.size() << "): ";
+				for (auto& val : data->per_channel_output_multiplier)
+				{
+					std::cout << val << " ";
+				}
+				std::cout << std::endl;
+				std::cout << "Per channel output shift (" << data->per_channel_output_shift.size() << "): ";
+				if (data->per_channel_output_multiplier.size() == data->per_channel_output_shift.size())
+				{
+					for (auto& val : data->per_channel_output_shift)
+					{
+						std::cout << val << " ";
+					}
+				}
+				std::cout << std::endl;
+				std::cout << "Fuse output activation min: " << data->output_activation_min << std::endl;
+				std::cout << "Fuse output activation max: " << data->output_activation_max << std::endl;
+				std::cout << "Scratch tensor index: " << data->scratch_tensor_index << std::endl;
+				std::cout << "Compute row sums: " << (data->compute_row_sums ? "true" : "false") << std::endl;
+				std::cout << "Ledger initialized: " << (data->ledger_initialized ? "true" : "false") << std::endl;
+				std::cout << "Quantized bias type: " << get_TfLiteType(data->quantized_bias_type) << std::endl;
+				std::cout << "~~~~~~~~~~~~~~~~~" << std::endl;
+			}
+		}
+
 		std::string get_TfLiteDelegateFlags(const TfLiteDelegateFlags flag)
 		{
 			switch (flag)
@@ -667,6 +700,19 @@ namespace tflite {
 			}
 		}
 
+		std::string get_TfLiteFullyConnectedWeightsFormat(const TfLiteFullyConnectedWeightsFormat type)
+		{
+			switch (type)
+			{
+			case kTfLiteFullyConnectedWeightsFormatDefault:
+				return STRINGIFY(kTfLiteFullyConnectedWeightsFormatDefault);
+			case kTfLiteFullyConnectedWeightsFormatShuffled4x16Int8:
+				return STRINGIFY(kTfLiteFullyConnectedWeightsFormatShuffled4x16Int8);
+			default:
+				return "unknown " + std::to_string((int)type);
+			}
+		}
+
 		void LogTfLiteAffineQuantization(const TfLiteAffineQuantization* const affine_quantization)
 		{
 			// quantized_dimension specifies which dimension the scales and zero_points
@@ -754,7 +800,7 @@ namespace tflite {
 				if (tensor.data.data != nullptr)
 				{
 					std::cout << "data: ";
-					for (int j = 0; j < custom_ops::size_extraction(tensor.dims); j++)
+					for (int j = 0; j < custom_ops::getFlatSize(tensor.dims); j++)
 					{
 						switch (tensor.type)
 						{
@@ -769,6 +815,7 @@ namespace tflite {
 							break;
 						case kTfLiteInt8:
 							// Unary operator to print signed char with numerical value through std::cout
+							// The tensors are too big to display
 							//std::cout << +*(reinterpret_cast<signed char*>(tensor.data.data) + j) << " ";
 							break;
 						default:
@@ -806,10 +853,20 @@ namespace tflite {
 			// TfLiteQuantization
 			LogTfLiteQuantization(tensor.quantization);
 
+			// TfLiteSparsity* sparsity;
+			if (tensor.sparsity != nullptr)
+			{
+				std::cout << "Metadata size: " << tensor.sparsity->dim_metadata_size << "\n";
+			}
+			else
+			{
+				std::cout << "Sparsity tensor?: no sparsity\n";
+			}
+
 			// const TfLiteIntArray* dims_signature
 			if (tensor.dims_signature != nullptr)
 			{
-				std::cout << "tensor dims signature size: " << tensor.dims_signature->size;
+				std::cout << "Tensor dims signature size: " << tensor.dims_signature->size;
 				std::cout << " signature dimensions: ";
 				for (int j = 0; j < tensor.dims_signature->size; j++)
 				{
@@ -868,6 +925,18 @@ namespace tflite {
 			std::cout << "Activation: " << get_TfLiteFusedActivation(params->activation) << std::endl;
 			std::cout << "Dilation width: " << params->dilation_width_factor;
 			std::cout << " height: " << params->dilation_height_factor << std::endl;
+			std::cout << "Quantized bias type: " << get_TfLiteType(params->quantized_bias_type) << std::endl;
+			std::cout << "-----------------" << std::endl;
+		}
+
+		void LogTfLiteFullyConnectedParams(const TfLiteFullyConnectedParams* const params)
+		{
+			std::cout << "TfLiteFullyConnectedParams:" << std::endl;
+			std::cout << "-----------------" << std::endl;
+			std::cout << "Activation: " << get_TfLiteFusedActivation(params->activation) << std::endl;
+			std::cout << "Weights Format: " << get_TfLiteFullyConnectedWeightsFormat(params->weights_format) << std::endl;
+			std::cout << "Keep Num of Dimensions: " << (params->keep_num_dims ? "true" : "false") << std::endl;
+			std::cout << "Asymmetric Quantize Inputs: " << (params->asymmetric_quantize_inputs ? "true" : "false") << std::endl;
 			std::cout << "Quantized bias type: " << get_TfLiteType(params->quantized_bias_type) << std::endl;
 			std::cout << "-----------------" << std::endl;
 		}

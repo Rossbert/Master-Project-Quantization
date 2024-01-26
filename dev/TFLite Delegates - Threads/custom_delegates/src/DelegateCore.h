@@ -11,6 +11,7 @@
 
 #include "Options.h"
 #include "ConvOps.h"
+#include "FullyConnectedOps.h"
 #include "Logger.h"
 
 namespace tflite {
@@ -55,25 +56,41 @@ namespace tflite {
 		MyDelegateOptions options_;
 
 		// Must be converted to vector if there will be multiple nodes that match the pattern
-		// Operation Data, later explore the possibility to store it as a vector
-		custom_ops::conv::OpData* operation_data_;
+		// Operation Data from convolutional operations
+		custom_ops::conv::OpData* operation_data_conv_;
 
 		// Must be converted to vector if there will be multiple nodes that match the pattern
-		// Convolution Parameters, convert it to a vector
+		// Operation Data from convolutional operations
+		custom_ops::fully_connected::OpData* operation_data_fully_;
+
+		// Must be converted to vector if there will be multiple nodes that match the pattern
+		// Convolution Parameters
 		TfLiteConvParams* conv_params_;
+
+		// Must be converted to vector if there will be multiple nodes that match the pattern
+		// Fully Connected Parameters
+		TfLiteFullyConnectedParams* fully_params_;
 
 		// Prepared flag
 		bool prepared_ = false;
+		
+		// Steals the Convolution Operation Data from the to-be-replaced node
+		void GetConvOperationData(const custom_ops::conv::OpData&);
 
-		// Steals the Operation data from the to-be-replaced node
-		void GetOperationData(const custom_ops::conv::OpData&);
+		// Steals the Fully Connected Operation Data from the to-be-replaced node
+		void GetFullyOperationData(const custom_ops::fully_connected::OpData&);
 
 		// Steals the Convolution Parameters from the to-be-replaced node
 		void GetConvParams(const TfLiteConvParams&);
 
-		// Gets the indexes that belong to the initial and final channel chunk
-		void getIndexes(int start, int end, const std::vector<std::pair<std::vector<int>, std::vector<int>>>& realPositions, std::vector<int>& indexes);
+		// Steals the Fully Connected Parameters from the to-be-replaced node
+		void GetFullyParams(const TfLiteFullyConnectedParams&);
 
+		// Gets the indexes that belong to the initial and final channel chunk
+		void getChunkIndexes(int start, int end, const std::vector<std::pair<std::vector<int>, std::vector<int>>>& error_vec_positions, std::vector<int>& indexes);
+
+		// Gets number of operations to be performed
+		int getNumberOperations(const std::vector<int>& output_dimensions, const std::vector<int>& kernel_dimensions);
 	};
 
 	// MyDelegate

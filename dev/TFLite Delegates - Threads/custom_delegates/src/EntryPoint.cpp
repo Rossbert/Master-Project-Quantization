@@ -16,6 +16,9 @@ extern "C" {
         // Option keys and values are received here from python
         if (num_options > 0)
         {
+#if LOGGER
+            //std::cout << "Entry point creating delegate with options\n";
+#endif // LOGGER
             tflite::MyDelegateOptions options(options_keys, options_values, num_options);
             return tflite::TfLiteDelegateFactory::CreateSimpleDelegate(std::move(std::make_unique<tflite::MyDelegate>(options)));
         }

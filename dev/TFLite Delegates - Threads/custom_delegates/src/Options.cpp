@@ -4,40 +4,58 @@ namespace tflite {
 
 	MyDelegateOptions::MyDelegateOptions(const MyDelegateOptions& options)
 		: operation_mode(options.operation_mode),
-		node_index(options.node_index),
 		bit_position(options.bit_position),
 		number_flips(options.number_flips),
 		dataset_size(options.dataset_size),
+		node_index(options.node_index),
+		builtin_code(options.builtin_code),
 		channels(options.channels),
 		chunk_size(options.chunk_size),
 		layer_name(options.layer_name)
 	{
 		// Copy constructor
-		errorPositions.resize(dataset_size);
-		realPositions.resize(dataset_size);
+		error_flat_positions.resize(dataset_size);
+		error_vec_positions.resize(dataset_size);
 		chunks_indexes.resize(dataset_size);
+		// This constructor is called from the initialization list of the constructor of MyDelegateKernel
+#if LOGGER
+		//std::cout << "MyDelegateOptions copy constructor\n";
+#endif // LOGGER
 	}
 
-	MyDelegateOptions::MyDelegateOptions(const OperationMode operation_mode, const int node_index,
-		const int bit_position, const int number_flips, const int dataset_size, const int channels, 
-		const int chunk_size, const std::string layer_name)
+	MyDelegateOptions::MyDelegateOptions(
+		const OperationMode operation_mode, 
+		const int bit_position, 
+		const int number_flips,
+		const int dataset_size, 
+		const int node_index,
+		const int builtin_code,
+		const int channels, 
+		const int chunk_size, 
+		const std::string layer_name)
 		: operation_mode(operation_mode),
-		node_index(node_index),
 		bit_position(bit_position),
 		number_flips(number_flips),
 		dataset_size(dataset_size),
+		node_index(node_index),
+		builtin_code(builtin_code),
 		channels(channels),
 		chunk_size(chunk_size),
 		layer_name(layer_name)
 	{
 		// Creates new seed for the generator
-		errorPositions.resize(dataset_size);
-		realPositions.resize(dataset_size);
+		error_flat_positions.resize(dataset_size);
+		error_vec_positions.resize(dataset_size);
 		chunks_indexes.resize(dataset_size);
 	}
 
 	MyDelegateOptions::MyDelegateOptions(char** options_keys, char** options_values, size_t num_options)
 	{
+		// This constructor is called from the entry point
+#if LOGGER
+		//std::cout << "MyDelegateOptions constructor from keys\n";
+#endif // LOGGER
+
 		for (int i = 0; i < num_options; i++)
 		{
 			if (options_keys != nullptr && options_values != nullptr)
@@ -73,30 +91,45 @@ namespace tflite {
 			}
 		}
 
-		errorPositions.resize(dataset_size);
-		realPositions.resize(dataset_size);
+		error_flat_positions.resize(dataset_size);
+		error_vec_positions.resize(dataset_size);
 		chunks_indexes.resize(dataset_size);
 	}
 	
-	void MyDelegateOptions::convertPosition(int position, int max_size, const std::vector<int>& tensor_size, std::vector<int>& position_values)
+	void MyDelegateOptions::convertPositionInt2Vec(int position, int max_size, const std::vector<int>& tensor_dimensions, std::vector<int>& vec_position)
 	{
 		int acc = position;
 		int div = max_size;
-		for (int dimension : tensor_size)
+		for (int dimension : tensor_dimensions)
 		{
 			div /= dimension;
-			position_values.emplace_back(acc / div);
-			acc -= position_values.back() * div;
+			vec_position.emplace_back(acc / div);
+			acc -= vec_position.back() * div;
 		}
 	}
 
-	bool MyDelegateOptions::pair_greater(const std::pair<int, int>& pair1, const std::pair<int, int>& pair2)
+	bool MyDelegateOptions::getPairIntGreater(const std::pair<int, int>& pair1, const std::pair<int, int>& pair2)
 	{
 		// Sort in decreasing order based on the first element of the pair
-		return pair1.first > pair2.first;
+		return pair1.first > pair2.first || pair1.first == pair2.first && pair1.second > pair2.second;
 	}
 
-	bool MyDelegateOptions::pair_vectors_greater(const std::pair<std::vector<int>, std::vector<int>>& pair1, const std::pair<std::vector<int>, std::vector<int>>& pair2, const std::vector<int>& output_size)
+	int MyDelegateOptions::convertPositionVec2Int(const std::vector<int>& tensor_dimensions, const std::vector<int>& vec_position)
+	{
+		int position = 0;
+		for (int i = 0; i < vec_position.size(); i++)
+		{
+			int acc = 1;
+			for (int j = i + 1; j < tensor_dimensions.size(); j++)
+			{
+				acc *= tensor_dimensions[j];
+			}
+			position += vec_position[i] * acc;
+		}
+		return position;
+	}
+
+	bool MyDelegateOptions::getPairVecGreater(const std::pair<std::vector<int>, std::vector<int>>& pair1, const std::pair<std::vector<int>, std::vector<int>>& pair2, const std::vector<int>& first_dimensions, const std::vector<int>& second_dimensions)
 	{
 		// Sort in decreasing order based on the first element of the pair
 		const std::vector<int>& first1 = pair1.first;
@@ -104,25 +137,13 @@ namespace tflite {
 		const std::vector<int>& first2 = pair2.first;
 		const std::vector<int>& second2 = pair2.second;
 
-		const int& batch1 = first1[0];
-		const int& output_y1 = first1[1];
-		const int& output_x1 = first1[2];
-		const int& output_channel1 = first1[3];
+		const int pos_first1 = convertPositionVec2Int(first_dimensions, first1);
+		const int pos_first2 = convertPositionVec2Int(first_dimensions, first2);
 
-		const int& batch2 = first2[0];
-		const int& output_y2 = first2[1];
-		const int& output_x2 = first2[2];
-		const int& output_channel2 = first2[3];
+		const int pos_second1 = convertPositionVec2Int(first_dimensions, second1);
+		const int pos_second2 = convertPositionVec2Int(first_dimensions, second2);
 
-		const int& batches = output_size[0];
-		const int& outputRows = output_size[1];
-		const int& outputCols = output_size[2];
-		const int& outputChannels = output_size[3];
-
-		const int pos1 = batch1 * outputRows * outputCols * outputChannels + output_y1 * outputCols * outputChannels + output_x1 * outputChannels + output_channel1;
-		const int pos2 = batch2 * outputRows * outputCols * outputChannels + output_y2 * outputCols * outputChannels + output_x2 * outputChannels + output_channel2;
-
-		return pos1 > pos2;
+		return pos_first1 > pos_first2 || pos_first1 == pos_first2 && pos_second1 > pos_second2;
 	}
 
 	void MyDelegateOptions::Log() const

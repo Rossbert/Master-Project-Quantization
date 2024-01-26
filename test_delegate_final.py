@@ -56,7 +56,8 @@ class OperationMode(IntEnum):
 N_SIMULATIONS = 10
 N_FLIPS_LIMIT = 4
 # Load paths
-LAYER_NAME = "conv2d_2/"
+LAYER_NAME = "last/"
+# LAYER_NAME = "conv2d_2/"
 TFLITE_PATH = "./model/tflite_ep5_2023-07-02_16-50-58.tflite"
 DELEGATE_PATH = "./dependencies/custom_delegates.dll"
 OUTPUTS_DIR = "./outputs/"
@@ -92,7 +93,7 @@ print(f"Model accuracy : {original_accuracy:.2%}")
 print(f"Model loss: {original_loss:.6f}")
 
 bit_position = 31
-number_flips = 10
+number_flips = 20
 
 delegate = tf.lite.experimental.load_delegate(
     library = DELEGATE_PATH,

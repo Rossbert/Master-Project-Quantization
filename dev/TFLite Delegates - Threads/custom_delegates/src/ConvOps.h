@@ -8,6 +8,7 @@
 #include <vector>
 #include <bitset>
 #include <thread>
+#include <mutex>
 #include <tensorflow/lite/core/c/builtin_op_data.h>
 #include <tensorflow/lite/core/c/c_api_types.h>
 #include <tensorflow/lite/kernels/internal/tensor_ctypes.h>
@@ -36,8 +37,6 @@ namespace tflite {
 		void LogTfLiteConvParams(const TfLiteConvParams* const params);
 		void LogTfLiteTensor(const TfLiteTensor& tensor);
 	}
-	//extern enum class OperationMode;
-	//extern struct MyDelegateOptions;
 
 	namespace custom_ops {
 
@@ -146,10 +145,6 @@ namespace tflite {
 			// Frees the memory of the OpData created in init
 			void Free(TfLiteContext* context, void* buffer);
 			
-			// Gets the input, filter, and output indexes if the order of tensor inputs is mixed
-			void GetTensorIndexes(TfLiteContext* context, TfLiteNode* node,
-				int* bias_index, int* filter_index, int* input_index);
-
 			// Check if im2col needs to be allocated, as some version of optimized Conv dont
 			// use it. If any change is supporting im2col in any of the Conv versions, then
 			// it should be updated here as well
@@ -249,15 +244,15 @@ namespace tflite {
 				// 1 For some reason tensor allocate only allows 1 image to be analyzed
 				for (int batch = 0; batch < batches; ++batch) 
 				{
-					// 24 for first layer
+					// 
 					for (int out_y = 0; out_y < output_height; ++out_y) 
 					{
 						const int in_y_origin = (out_y * stride_height) - pad_height;
-						// 24 for first layer
+						// 
 						for (int out_x = 0; out_x < output_width; ++out_x) 
 						{
 							const int in_x_origin = (out_x * stride_width) - pad_width;
-							// 32 for first layer
+							// 
 							for (int out_channel = 0; out_channel < output_depth; ++out_channel) 
 							{
 								// Will always be 0!!!!!!! input channels = filter input channels then filters per group = number of filters (output channels) so group = 0
@@ -321,7 +316,7 @@ namespace tflite {
 					}
 				}
 			}
-
+			
 			// Raw operation to pararellize in threads
 			inline void DisturbedConvolutionOperation(
 				const int dataset_index,
@@ -346,15 +341,15 @@ namespace tflite {
 				// 1 For some reason tensor allocate only allows 1 image to be analyzed
 				for (int batch = 0; batch < batches; ++batch)
 				{
-					// 24 for first layer
+					// 
 					for (int out_y = 0; out_y < output_height; ++out_y)
 					{
 						const int in_y_origin = (out_y * stride_height) - pad_height;
-						// 24 for first layer
+						// 
 						for (int out_x = 0; out_x < output_width; ++out_x)
 						{
 							const int in_x_origin = (out_x * stride_width) - pad_width;
-							// 32 for first layer
+							// 
 							for (int out_channel = 0; out_channel < output_depth; ++out_channel)
 							{
 								int outputPosition = batch * output_height * output_width * output_depth + out_y * output_width * output_depth + out_x * output_depth + out_channel;
@@ -389,7 +384,7 @@ namespace tflite {
 
 											int32_t result = filter_val * (input_val + input_offset);
 
-											if (idx_counter >= 0 && options.errorPositions[dataset_index][chunk_indexes[idx_counter]].first == outputPosition && options.errorPositions[dataset_index][chunk_indexes[idx_counter]].second == kernelPartialPosition)
+											if (idx_counter >= 0 && options.error_flat_positions[dataset_index][chunk_indexes[idx_counter]].first == outputPosition && options.error_flat_positions[dataset_index][chunk_indexes[idx_counter]].second == kernelPartialPosition)
 											{
 												std::bitset<32> bits(result);
 												bits.flip(options.bit_position);
@@ -458,15 +453,15 @@ namespace tflite {
 				// 1 For some reason tensor allocate only allows 1 image to be analyzed
 				for (int batch = 0; batch < batches; ++batch)
 				{
-					// 24 for first layer
+					// 
 					for (int out_y = 0; out_y < output_height; ++out_y)
 					{
 						const int in_y_origin = (out_y * stride_height) - pad_height;
-						// 24 for first layer
+						// 
 						for (int out_x = 0; out_x < output_width; ++out_x)
 						{
 							const int in_x_origin = (out_x * stride_width) - pad_width;
-							// 32 for first layer
+							// 
 							for (int out_channel = start_chunk; out_channel < end_chunk; ++out_channel)
 							{
 								int outputPosition = batch * output_height * output_width * output_depth + out_y * output_width * output_depth + out_x * output_depth + out_channel;
@@ -501,8 +496,14 @@ namespace tflite {
 
 											int32_t result = filter_val * (input_val + input_offset);
 
-											if (idx_counter >= 0 && options.errorPositions[dataset_index][chunk_indexes[idx_counter]].first == outputPosition && options.errorPositions[dataset_index][chunk_indexes[idx_counter]].second == kernelPartialPosition)
+											if (idx_counter >= 0 && options.error_flat_positions[dataset_index][chunk_indexes[idx_counter]].first == outputPosition && options.error_flat_positions[dataset_index][chunk_indexes[idx_counter]].second == kernelPartialPosition)
 											{
+												//std::unique_lock<std::mutex> lock(coutMutex);
+												//if (dataset_index == 0)
+												//{
+												//	std::cout << "Index counter " << idx_counter << "\n";
+												//}
+												//lock.unlock();
 												std::bitset<32> bits(result);
 												bits.flip(options.bit_position);
 												result = static_cast<int>(bits.to_ulong());
@@ -564,12 +565,14 @@ namespace tflite {
 				const MyDelegateOptions& options)
 			{
 				std::vector<std::thread> threadPool;
+				//std::mutex coutMutex;
 
 				for (int i = 0; i < options.num_threads; ++i)
 				{
 					const int start = i * options.chunk_size;
 					const int end = std::min(start + options.chunk_size, options.channels);
 
+#if LOGGER
 					//std::cout << "Indexes size " << chunk_indexes.size() << "\n";
 					//std::cout << "Indexes capacity " << chunk_indexes.capacity() << "\n";
 					//std::cout << "Start: " << start << " End: " << end << "\n";
@@ -579,9 +582,9 @@ namespace tflite {
 					//	std::cout << val << " ";
 					//}
 					//std::cout << "\n";
-
+					
 					//std::cout << "Real positions\n";
-					//for (const auto& val : options.realPositions[dataset_index])
+					//for (const auto& val : options.error_vec_positions[dataset_index])
 					//{
 					//	for (const int& element : val.first)
 					//	{
@@ -595,6 +598,7 @@ namespace tflite {
 					//	std::cout << "\n";
 					//}
 					//std::cout << "\n";
+#endif // LOGGER
 
 					threadPool.emplace_back(
 						DisturbedConvolutionOperationByChunks,
@@ -678,58 +682,63 @@ namespace tflite {
 				// Because of threads this should be incorporated in the positions of the batches
 				static int dataset_index = 0;
 
-				// Parallel computing done here!
-				ParallelDisturbedConvolution(
-					dataset_index,
-					output_multiplier, output_shift,
-					batches, output_height, output_width, output_depth,
-					filter_height, filter_width, filter_input_depth,
-					stride_height, pad_height,
-					stride_width, pad_width,
-					input_height, input_width,
-					filters_per_group,
-					dilation_width_factor, dilation_height_factor,
-					input_offset, output_offset,
-					output_activation_min, output_activation_max,
-					input_shape, input_data,
-					filter_shape, filter_data,
-					bias_shape, bias_data,
-					output_shape, output_data,
-					options);
-
-				//DisturbedConvolutionOperation(
-				//	dataset_index,
-				//	output_multiplier, output_shift,
-				//	batches, output_height, output_width, output_depth,
-				//	filter_height, filter_width, filter_input_depth,
-				//	stride_height, pad_height,
-				//	stride_width, pad_width,
-				//	input_height, input_width,
-				//	filters_per_group,
-				//	dilation_width_factor, dilation_height_factor,
-				//	input_offset, output_offset,
-				//	output_activation_min, output_activation_max,
-				//	input_shape, input_data,
-				//	filter_shape, filter_data,
-				//	bias_shape, bias_data,
-				//	output_shape, output_data,
-				//	options.full_indexes,
-				//	options);
+				if (options.is_threaded)
+				{
+					// Parallel computing done here!
+					ParallelDisturbedConvolution(
+						dataset_index,
+						output_multiplier, output_shift,
+						batches, output_height, output_width, output_depth,
+						filter_height, filter_width, filter_input_depth,
+						stride_height, pad_height,
+						stride_width, pad_width,
+						input_height, input_width,
+						filters_per_group,
+						dilation_width_factor, dilation_height_factor,
+						input_offset, output_offset,
+						output_activation_min, output_activation_max,
+						input_shape, input_data,
+						filter_shape, filter_data,
+						bias_shape, bias_data,
+						output_shape, output_data,
+						options);
+				}
+				else
+				{
+					DisturbedConvolutionOperation(
+						dataset_index,
+						output_multiplier, output_shift,
+						batches, output_height, output_width, output_depth,
+						filter_height, filter_width, filter_input_depth,
+						stride_height, pad_height,
+						stride_width, pad_width,
+						input_height, input_width,
+						filters_per_group,
+						dilation_width_factor, dilation_height_factor,
+						input_offset, output_offset,
+						output_activation_min, output_activation_max,
+						input_shape, input_data,
+						filter_shape, filter_data,
+						bias_shape, bias_data,
+						output_shape, output_data,
+						options.full_indexes,
+						options);
+				}
 
 				/*
 				// 1 For some reason tensor allocate only allows 1 image to be analyzed
-				int idx_counter = options.indexes.size() - 1;
+				int idx_counter = options.full_indexes.size() - 1;
 				for (int batch = 0; batch < batches; ++batch)
 				{
-					// 24 for first layer
+					// 
 					for (int out_y = 0; out_y < output_height; ++out_y)
 					{
 						const int in_y_origin = (out_y * stride_height) - pad_height;
-						// 24 for first layer
+						// 
 						for (int out_x = 0; out_x < output_width; ++out_x)
 						{
 							const int in_x_origin = (out_x * stride_width) - pad_width;
-							// 32 for first layer
+							// 
 							//for (int out_channel = start; out_channel < end; ++out_channel)
 							for (int out_channel = 0; out_channel < output_depth; ++out_channel)
 							{
@@ -765,7 +774,7 @@ namespace tflite {
 
 											int32_t result = filter_val * (input_val + input_offset);
 
-											if (idx_counter >= 0 && options.errorPositions[dataset_index][options.indexes[idx_counter]].first == outputPosition && options.errorPositions[dataset_index][options.indexes[idx_counter]].second == kernelPartialPosition)
+											if (idx_counter >= 0 && options.error_flat_positions[dataset_index][options.full_indexes[idx_counter]].first == outputPosition && options.error_flat_positions[dataset_index][options.full_indexes[idx_counter]].second == kernelPartialPosition)
 											{
 												std::bitset<32> bits(result);
 												bits.flip(options.bit_position);
@@ -815,11 +824,15 @@ namespace tflite {
 
 		}
 	
-		// Extract the number of total elements inside a TfLiteIntArray
-		int size_extraction(const TfLiteIntArray* dimensions);
+		// Gets the input, filter, and output indexes if the order of tensor inputs is mixed
+		void GetTensorIndexes(TfLiteContext* context, TfLiteNode* node,
+			int* bias_index, int* filter_index, int* input_index);
 
 		// Extract the number of total elements inside a TfLiteIntArray
-		int size_extraction(const TfLiteIntArray* dimensions, const int starting_index);
+		int getFlatSize(const TfLiteIntArray* dimensions);
+
+		// Extract the number of total elements inside a TfLiteIntArray
+		int getFlatSize(const TfLiteIntArray* dimensions, const int starting_index);
 
 	}
 }

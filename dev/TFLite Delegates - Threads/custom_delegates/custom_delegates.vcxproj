@@ -104,6 +104,7 @@
   <ItemGroup>
     <ClCompile Include="..\..\..\..\..\..\..\tensorflow source\tensorflow_src\tensorflow\lite\delegates\utils\simple_delegate.cc" />
     <ClCompile Include="src\ConvOps.cpp" />
+    <ClCompile Include="src\FullyConnectedOps.cpp" />
     <ClCompile Include="src\Logger.cpp" />
     <ClCompile Include="src\EntryPoint.cpp" />
     <ClCompile Include="src\DelegateCore.cpp" />
@@ -111,6 +112,8 @@
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="src\ConvTemplates.h" />
+    <ClInclude Include="src\FullyConnectedOps.h" />
+    <ClInclude Include="src\FullyConnectedTemplates.h" />
     <ClInclude Include="src\Logger.h" />
     <ClInclude Include="src\ConvOps.h" />
     <ClInclude Include="src\DelegateCore.h" />
