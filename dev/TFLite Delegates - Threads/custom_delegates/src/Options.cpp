@@ -1,6 +1,9 @@
 #include "Options.h"
+#include "Logger.h"
 
 namespace tflite {
+
+	bool MyDelegateOptions::new_call = false;
 
 	MyDelegateOptions::MyDelegateOptions(const MyDelegateOptions& options)
 		: operation_mode(options.operation_mode),
@@ -23,32 +26,6 @@ namespace tflite {
 #endif // LOGGER
 	}
 
-	MyDelegateOptions::MyDelegateOptions(
-		const OperationMode operation_mode, 
-		const int bit_position, 
-		const int number_flips,
-		const int dataset_size, 
-		const int node_index,
-		const int builtin_code,
-		const int channels, 
-		const int chunk_size, 
-		const std::string layer_name)
-		: operation_mode(operation_mode),
-		bit_position(bit_position),
-		number_flips(number_flips),
-		dataset_size(dataset_size),
-		node_index(node_index),
-		builtin_code(builtin_code),
-		channels(channels),
-		chunk_size(chunk_size),
-		layer_name(layer_name)
-	{
-		// Creates new seed for the generator
-		error_flat_positions.resize(dataset_size);
-		error_vec_positions.resize(dataset_size);
-		chunks_indexes.resize(dataset_size);
-	}
-
 	MyDelegateOptions::MyDelegateOptions(char** options_keys, char** options_values, size_t num_options)
 	{
 		// This constructor is called from the entry point
@@ -63,10 +40,6 @@ namespace tflite {
 				if (strcmp(*(options_keys + i), "operation_mode") == 0)
 				{
 					operation_mode = (OperationMode)std::stoi(*(options_values + i));
-				}
-				else if (strcmp(*(options_keys + i), "node_index") == 0)
-				{
-					node_index = std::stoi(*(options_values + i));
 				}
 				else if (strcmp(*(options_keys + i), "bit_position") == 0)
 				{
@@ -148,24 +121,31 @@ namespace tflite {
 
 	void MyDelegateOptions::Log() const
 	{
-		std::cout << "layer name = " << layer_name << std::endl;
+		std::cout << "layer name = " << layer_name << "\n";
 		switch (operation_mode)
 		{
 		case tflite::OperationMode::none:
-			std::cout << "operation mode = none" << std::endl;
+			std::cout << "operation mode = none\n";
 			break;
 		case tflite::OperationMode::weights:
-			std::cout << "operation mode = weights" << std::endl;
+			std::cout << "operation mode = weights\n";
 			break;
 		case tflite::OperationMode::convolution:
-			std::cout << "operation mode = convolution" << std::endl;
+			std::cout << "operation mode = convolution\n";
 			break;
 		default:
-			std::cout << "operation mode = unknown" << std::endl;
+			std::cout << "operation mode = unknown\n";
 			break;
 		}
-		std::cout << "node index = " << node_index << std::endl;
-		std::cout << "bit position = " << bit_position << std::endl;
+		std::cout << "bit position = " << bit_position << "\n";
+		std::cout << "number flips = " << number_flips << "\n";
+		std::cout << "dataset size = " << dataset_size << "\n";
+		std::cout << "node index = " << node_index << "\n";
+		std::cout << "builtin code = " << custom_logger::get_builtin_code(builtin_code) << "\n";
+		std::cout << "channels = " << channels << "\n";
+		std::cout << "chunk size = " << chunk_size << "\n";
+		std::cout << "num threads = " << num_threads << "\n";
+		std::cout << "is threaded: " << (is_threaded ? "true" : "false") << "\n";
 	}
 
 }

@@ -34,6 +34,7 @@ namespace tflite {
 
 		custom_ops::fully_connected::Free(nullptr, operation_data_fully_);
 		delete fully_params_;
+		//std::cout << "\nMyDelegateKernel destructor called\n\n";
 	}
 
 	TfLiteStatus MyDelegateKernel::Init(TfLiteContext* context, const TfLiteDelegateParams* params)
@@ -389,6 +390,8 @@ namespace tflite {
 			}
 
 #if LOGGER
+			//options_.Log();
+
 			//std::cout << "Indexes\n";
 			//for (const auto& val : options_.full_indexes)
 			//{
@@ -416,6 +419,7 @@ namespace tflite {
 			//	}
 			//	std::cout << "\n";
 			//}
+			
 			//std::cout << "Special logging! To be delegated node index: " << node_index << std::endl;
 			//std::cout << "Memory address of node: " << reinterpret_cast<void*>(delegated_node) << std::endl;
 			//custom_logger::LogTfLiteRegistration(delegated_node_registration);
@@ -466,10 +470,15 @@ namespace tflite {
 		else
 		{
 			prepared_success = kTfLiteOk;
+			// Resets the new call variable whenever a new dataset is evaluated
+			if (!MyDelegateOptions::new_call)
+			{
+				MyDelegateOptions::new_call = true;
+			}
 		}
 
 #if LOGGER
-		//std::cout << "Special logging! " << std::endl;
+		/*std::cout << "Special logging!\n";*/
 		//custom_logger::LogTfLiteContext(context);
 		//std::cout << "New node: " << std::endl;
 		//std::cout << "Memory address of node: " << reinterpret_cast<void*>(node) << std::endl;
@@ -484,6 +493,7 @@ namespace tflite {
 	
 	TfLiteStatus MyDelegateKernel::Eval(TfLiteContext* context, TfLiteNode* node)
 	{
+		// This is called whenever a session is active, so static variables here will be initialized only once for all the lifetime of tflite in python
 		// Evaluate the delegated graph.
 		// Here we loop over all the delegated nodes.
 		// The number of nodes equals ''inputs_.size()'' and inputs[i] is a list of
@@ -502,7 +512,14 @@ namespace tflite {
 		//options_.Log();
 		//custom_logger::LogTfLiteContext(context);
 #endif // LOGGER
+
 		TfLiteStatus evalued_success;
+		if (MyDelegateOptions::new_call)
+		{
+			options_.dataset_index = 0;
+			// Checks first evaluation of the dataset being evaluated
+			MyDelegateOptions::new_call = false;
+		}
 
 		if (options_.builtin_code == kTfLiteBuiltinConv2d)
 		{
@@ -512,6 +529,9 @@ namespace tflite {
 		{
 			evalued_success = custom_ops::fully_connected::Eval<custom_ops::fully_connected::kReference>(context, node, fully_params_, operation_data_fully_, options_);
 		}
+
+		// Most important part, whenever this is called the index of the dataset is incremented
+		options_.dataset_index++;
 
 #if LOGGER
 		//std::cout << "Evaluation result: " << custom_logger::get_TfLiteStatus(evalued_success) << std::endl;
@@ -650,7 +670,7 @@ namespace tflite {
 	}
 	MyDelegate::~MyDelegate()
 	{
-
+		//std::cout << "\nMyDelegate destructor called\n\n";
 	}
 	bool MyDelegate::IsNodeSupportedByDelegate(const TfLiteRegistration* registration, const TfLiteNode* node, TfLiteContext* context) const
 	{
@@ -752,7 +772,7 @@ namespace tflite {
 	}
 	const char* MyDelegate::Name() const
 	{
-		static constexpr char kName[] = "DelegateConvSET";
+		static constexpr char kName[] = "DelegateSET";
 		return kName;
 	}
 	std::unique_ptr<SimpleDelegateKernelInterface> MyDelegate::CreateDelegateKernelInterface()

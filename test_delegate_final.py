@@ -49,20 +49,41 @@ def evaluate_ninput_model(interpreter: tf.lite.Interpreter, dataset_inputs: dict
     return loss, accuracy, outputs
 
 class OperationMode(IntEnum):
+    """ Int enum to get the operation modes """
     none = 0
-    weigths = 1
+    weights = 1
     convolution = 2
+
+def get_operation_mode(operation_mode : OperationMode) -> str:
+    """ Gets the operation mode in string """
+    match operation_mode:
+        case OperationMode.none:
+            return "none"
+        case OperationMode.weights:
+            return "weights"
+        case OperationMode.convolution:
+            return "convolution"
+        case _ :
+            return "error"
+
+def get_bits_size(operation_mode: OperationMode) -> int:
+    """ Gets the bit number of the operation """
+    match operation_mode:
+        case OperationMode.convolution:
+            return 32
+        case OperationMode.weights:
+            return 8
+        case _ :
+            return -1
 
 N_SIMULATIONS = 10
 N_FLIPS_LIMIT = 4
 # Load paths
-LAYER_NAME = "last/"
-# LAYER_NAME = "conv2d_2/"
+LAYERS = ("conv2d/", "conv2d_1/", "conv2d_2", "last/")
 TFLITE_PATH = "./model/tflite_ep5_2023-07-02_16-50-58.tflite"
 DELEGATE_PATH = "./dependencies/custom_delegates.dll"
 OUTPUTS_DIR = "./outputs/"
-SAVE_FILE_NAME = f"delegate_{TFLITE_PATH[-15:-7]}_{'weights'}_{datetime.datetime.now().strftime('%Y-%m-%d')}.csv"
-SAVE_DATA_PATH = OUTPUTS_DIR + SAVE_FILE_NAME
+
 if not os.path.exists(OUTPUTS_DIR):
     os.mkdir(OUTPUTS_DIR)
 
@@ -94,10 +115,11 @@ print(f"Model loss: {original_loss:.6f}")
 
 bit_position = 31
 number_flips = 20
+layer_name = LAYERS[0]
 
 delegate = tf.lite.experimental.load_delegate(
     library = DELEGATE_PATH,
-    options = {"layer_name": LAYER_NAME,
+    options = {"layer_name": layer_name,
             "operation_mode" : int(OperationMode.convolution),
             "bit_position": bit_position,
             "number_flips": number_flips,
@@ -118,7 +140,5 @@ print(f"Evaluation time {time.time() - evaluation_time:.3f} seconds")
 print(f"Model with delegate accuracy : {accuracy:.2%}")
 print(f"Model with delegate loss: {loss:.6f}")
 
-# differences, indexes, count = np.unique(outputs - original_outputs, return_index = True, return_counts = True)
-# print(f"\nUnique differences {differences}")
-# print(f"Indexes {indexes}")
-# print(f"Count {count}")
+save_file_name = f"delegate_{TFLITE_PATH[-15:-7]}_{get_operation_mode(OperationMode.convolution)}_{layer_name[:-1]}_{datetime.datetime.now().strftime('%Y-%m-%d')}.csv"
+save_data_path = OUTPUTS_DIR + save_file_name

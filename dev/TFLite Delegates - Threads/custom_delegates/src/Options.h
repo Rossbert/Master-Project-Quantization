@@ -19,6 +19,9 @@ namespace tflite {
 	// Stores the options to determine the behaviour of the delegate
 	struct MyDelegateOptions
 	{
+		// Overseer to check if same session has called 
+		static bool new_call;
+
 		// Maximum number of threads to avoid bottleneck
 		// This number was obtained experimentally
 		constexpr static int max_number_threads = 8;
@@ -26,6 +29,9 @@ namespace tflite {
 		// Maximum number of operations to be performed by a thread
 		// This number was obtained experimentally
 		constexpr static int max_operations_per_thread = 100000;
+
+		// Controls the index of the dataset image beig evaluated
+		int dataset_index = 0;
 
 		// Operation mode:
 		//	- None: convolution runs normally
@@ -108,28 +114,6 @@ namespace tflite {
 		/// </summary>
 		/// <param name="options">: Constant reference to an existing MyDelegateOptions instance</param>
 		MyDelegateOptions(const MyDelegateOptions& options);
-
-		/// <summary>
-		/// Constructor with initializer options
-		/// </summary>
-		/// <param name="operation_mode"></param>
-		/// <param name="node_index"></param>
-		/// <param name="bit_position">: Bit position to be flipped</param>
-		/// <param name="number_flips">: Number of flips done in total</param>
-		/// <param name="dataset_size">: Size of the dataset in total</param>
-		/// <param name="channels">: Number of channels saved to created threaded version</param>
-		/// <param name="chunk_size"></param>
-		/// <param name="layer_name"></param>
-		MyDelegateOptions(
-			const OperationMode operation_mode,
-			const int bit_position,
-			const int number_flips, 
-			const int dataset_size, 
-			const int node_index,
-			const int builtin_code,
-			const int channels, 
-			const int chunk_size, 
-			const std::string layer_name);
 
 		/// <summary>
 		/// Constructor with char pointers as input keys<para/>

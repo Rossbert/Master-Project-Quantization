@@ -102,7 +102,6 @@ namespace tflite {
 
             template <typename InputType, typename WeightType, typename OutputType, typename BiasType>
             void DisturbedFullyConnectedOperation(
-                const int dataset_index,
                 const int32_t output_multiplier, const int32_t output_shift,
                 const int batches, const int output_depth, const int accum_depth,
                 const int input_offset, const int filter_offset, const int output_offset,
@@ -114,6 +113,7 @@ namespace tflite {
                 const std::vector<int>& chunk_indexes,
                 const MyDelegateOptions& options)
             {
+                const int& dataset_index = options.dataset_index;
                 int idx_counter = chunk_indexes.size() - 1;
                 for (int b = 0; b < batches; ++b)
                 {
@@ -154,7 +154,7 @@ namespace tflite {
 
             template <typename InputType, typename WeightType, typename OutputType, typename BiasType>
             void DisturbedFullyConnectedOperationByChunks(
-                const int dataset_index, const int start_chunk, const int end_chunk,
+                const int start_chunk, const int end_chunk,
                 const int32_t output_multiplier, const int32_t output_shift,
                 const int batches, const int output_depth, const int accum_depth,
                 const int input_offset, const int filter_offset, const int output_offset,
@@ -166,6 +166,7 @@ namespace tflite {
                 const std::vector<int>& chunk_indexes,
                 const MyDelegateOptions& options)
             {
+                const int& dataset_index = options.dataset_index;
                 int idx_counter = chunk_indexes.size() - 1;
                 for (int b = 0; b < batches; ++b)
                 {
@@ -206,7 +207,6 @@ namespace tflite {
             
             template <typename InputType, typename WeightType, typename OutputType, typename BiasType>
             void ParallelDisturbedFullyConnected(
-                const int dataset_index,
                 const int32_t output_multiplier, const int32_t output_shift,
                 const int batches, const int output_depth, const int accum_depth,
                 const int input_offset, const int filter_offset, const int output_offset,
@@ -255,7 +255,7 @@ namespace tflite {
 
                     threadPool.emplace_back(
                         DisturbedFullyConnectedOperationByChunks<InputType, WeightType, OutputType, BiasType>,
-                        dataset_index, start, end,
+                        start, end,
                         output_multiplier, output_shift,
                         batches, output_depth, accum_depth,
                         input_offset, filter_offset, output_offset,
@@ -264,7 +264,7 @@ namespace tflite {
                         filter_data,
                         bias_data,
                         output_data,
-                        std::cref(options.chunks_indexes[dataset_index][i]),
+                        std::cref(options.chunks_indexes[options.dataset_index][i]),
                         std::cref(options));
                 }
 
@@ -303,14 +303,10 @@ namespace tflite {
                 TFLITE_DCHECK_LE(output_depth, filter_shape.Dims(filter_dim_count - 2));
                 const int accum_depth = filter_shape.Dims(filter_dim_count - 1);
 
-                // Because of threads this should be incorporated in the positions of the batches
-                static int dataset_index = 0;
-
                 if (options.is_threaded)
                 {
                     // Parallel computing done here!
                     ParallelDisturbedFullyConnected(
-                        dataset_index,
                         output_multiplier, output_shift,
                         batches, output_depth, accum_depth,
                         input_offset, filter_offset, output_offset,
@@ -325,7 +321,6 @@ namespace tflite {
                 else
                 {
                     DisturbedFullyConnectedOperation(
-                        dataset_index,
                         output_multiplier, output_shift,
                         batches, output_depth, accum_depth,
                         input_offset, filter_offset, output_offset,
@@ -356,7 +351,7 @@ namespace tflite {
 
                             int32_t result = (filter_val + filter_offset) * (input_val + input_offset);
 
-                            if (idx_counter >= 0 && options.error_flat_positions[dataset_index][chunk_indexes[idx_counter]].first == outputPosition && options.error_flat_positions[dataset_index][chunk_indexes[idx_counter]].second == kernelPartialPosition)
+                            if (idx_counter >= 0 && options.error_flat_positions[options.dataset_index][chunk_indexes[idx_counter]].first == outputPosition && options.error_flat_positions[options.dataset_index][chunk_indexes[idx_counter]].second == kernelPartialPosition)
                             {
                                 std::bitset<32> bits(result);
                                 bits.flip(options.bit_position);
@@ -379,7 +374,6 @@ namespace tflite {
                 }
                 */
 
-                dataset_index++;
             }
 
             namespace {
