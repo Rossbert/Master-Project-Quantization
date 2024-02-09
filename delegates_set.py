@@ -76,8 +76,8 @@ def get_bits_size(operation_mode: OperationMode) -> int:
             return -1
 
 OPERATION_MODES = (OperationMode.convolution, OperationMode.weights)
-LAYERS = ("conv2d/", "conv2d_1/", "conv2d_2", "last/")
-N_SIMULATIONS = 5
+LAYERS = ("conv2d/", "conv2d_1/", "conv2d_2/", "last/")
+N_SIMULATIONS = 25
 NUM_BITS_TO_FLIP = (1, 2, 4)
 # Load paths
 TFLITE_PATH = "./model/tflite_ep5_2023-07-02_16-50-58.tflite"
@@ -113,7 +113,8 @@ for operation_mode in OPERATION_MODES:
     file_time = time.time()
     print(f"Operation mode {get_operation_mode(operation_mode)}:\n")
 
-    save_file_name = f"delegate_{TFLITE_PATH[-15:-7]}_{get_operation_mode(operation_mode)}_{datetime.datetime.now().strftime('%Y-%m-%d')}.csv"
+    save_file_name = f"delegate_{TFLITE_PATH[-15:-7]}_{get_operation_mode(operation_mode)}_{'2024-01-27'}.csv"
+    # save_file_name = f"delegate_{TFLITE_PATH[-15:-7]}_{get_operation_mode(operation_mode)}_{datetime.datetime.now().strftime('%Y-%m-%d')}.csv"
     save_data_path = OUTPUTS_DIR + save_file_name
     flag_file_exists = os.path.exists(save_data_path)
     last_index = -1
@@ -124,7 +125,7 @@ for operation_mode in OPERATION_MODES:
                 ['',
                 'reference',
                 'layer_name',
-                'layer_counter'
+                'layer_counter',
                 'n_bits_flipped',
                 'bit_disrupted',
                 'accuracy',
