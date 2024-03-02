@@ -114,8 +114,8 @@ print(f"Model accuracy : {original_accuracy:.2%}")
 print(f"Model loss: {original_loss:.6f}")
 
 bit_position = 31
-number_flips = 20
-layer_name = LAYERS[0]
+number_flips = 0
+layer_name = LAYERS[3]
 
 delegate = tf.lite.experimental.load_delegate(
     library = DELEGATE_PATH,

@@ -1,0 +1,3 @@
+[submodule "dev/Custom Delegates"]
+	path = dev/Custom Delegates
+	url = git@github.com-Rossbert:Rossbert/Custom-Delegates-Tensorflow-Lite.git

@@ -1,5 +1,6 @@
 ,reference,layer_name,layer_counter,n_bits_flipped,bit_disrupted,accuracy,accuracy_degradation,loss
 ,original,,,,,0.914,,0.38962257
+,weights,,,,,0.914,,0.38962257
 0,2024/01/27 17:46:32,conv2d/,0,1,0,0.9144,0.00039999999999995595,0.38823706
 1,2024/01/27 17:46:34,conv2d/,0,2,0,0.9145,0.0004999999999999449,0.38980722
 2,2024/01/27 17:46:36,conv2d/,0,4,0,0.914,0.0,0.39047915
